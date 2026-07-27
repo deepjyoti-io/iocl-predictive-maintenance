@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-import random
+import json
 import os
 import csv
 from fastapi import FastAPI
@@ -18,11 +18,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load ML Pipeline using memory mapping to prevent Out Of Memory (OOM) errors on cloud hosts
+# Global index tracker to step through test_stream.json sequentially
+stream_index = 0
+
+# Load ML Pipeline using memory mapping
 model_path = "pump_rf_pipeline.pkl"
 if os.path.exists(model_path):
     try:
-        # mmap_mode='r' reads model from disk on-demand instead of clogging RAM
         model = joblib.load(model_path, mmap_mode='r')
     except Exception as e:
         print(f"Error loading model with mmap: {e}")
@@ -30,7 +32,7 @@ if os.path.exists(model_path):
 else:
     model = None
 
-# CSV Audit Log File setup (safely handled for cloud read-only filesystems)
+# CSV Audit Log File setup
 CSV_LOG_FILE = "pump_monitoring_log.csv"
 try:
     if not os.path.exists(CSV_LOG_FILE):
@@ -44,21 +46,75 @@ try:
 except Exception as e:
     print(f"CSV log file creation skipped/failed: {e}")
 
+
+def load_stream_data():
+    """Helper to load test_stream.json safely."""
+    stream_file = "test_stream.json"
+    if os.path.exists(stream_file):
+        try:
+            with open(stream_file, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error reading {stream_file}: {e}")
+    return []
+
+
+@app.get("/")
+def read_root():
+    return {"status": "IOCL Pump Telemetry API is Live!"}
+
+
 @app.get("/api/pump/status")
 def get_pump_status():
-    # Simulated telemetry variations
-    base_rul = 338.3
-    time_offset = random.uniform(-2.0, 2.0)
-    predicted_rul = round(base_rul + time_offset, 1)
-    actual_rul = round(predicted_rul + random.uniform(-1.5, 1.5), 1)
-    efficiency = round(81.1 + random.uniform(-1.0, 1.0), 1)
+    global stream_index
     
-    vibration = round(1.01 + random.uniform(-0.1, 0.15), 2)
-    bearing_temp = round(50.3 + random.uniform(-0.5, 0.8), 1)
-    inlet_pressure = round(48.3 + random.uniform(-0.6, 0.6), 1)
+    stream_data = load_stream_data()
+    
+    if stream_data:
+        # Loop back to the beginning if we reach the end of the JSON array
+        current_sample = stream_data[stream_index % len(stream_data)]
+        stream_index += 1
+        
+        # Extract features from JSON (handles both direct key names and sensor names)
+        vibration = round(current_sample.get("vibration_velocity", current_sample.get("vibration", 1.01)), 2)
+        bearing_temp = round(current_sample.get("bearing_temp", current_sample.get("temperature", 50.3)), 1)
+        inlet_pressure = round(current_sample.get("inlet_pressure", current_sample.get("pressure", 48.3)), 1)
+        
+        # Run ML Prediction if model exists, otherwise extract or calculate fallback
+        if model is not None:
+            try:
+                # Prepare DataFrame for model input
+                input_df = pd.DataFrame([{
+                    "vibration_velocity": vibration,
+                    "bearing_temp": bearing_temp,
+                    "inlet_pressure": inlet_pressure
+                }])
+                predicted_rul = round(float(model.predict(input_df)[0]), 1)
+            except Exception as e:
+                print(f"Prediction error: {e}")
+                predicted_rul = round(current_sample.get("predicted_rul_hours", current_sample.get("rul", 338.3)), 1)
+        else:
+            predicted_rul = round(current_sample.get("predicted_rul_hours", current_sample.get("rul", 338.3)), 1)
+            
+        actual_rul = round(current_sample.get("actual_rul_hours", predicted_rul), 1)
+        efficiency = round(current_sample.get("calculated_efficiency", current_sample.get("efficiency", 81.1)), 1)
 
-    status = "Maintenance Required" if predicted_rul < 250 else "All Good"
-    alert_message = "Routine bearing lubrication and vibration check advised." if status == "Maintenance Required" else "Pump operating under normal parameters."
+    else:
+        # Fallback if test_stream.json is missing or empty
+        predicted_rul = 338.3
+        actual_rul = 338.3
+        efficiency = 81.1
+        vibration = 1.01
+        bearing_temp = 50.3
+        inlet_pressure = 48.3
+
+    # Dynamic status evaluation based on prediction threshold
+    status = "Maintenance Required" if predicted_rul < 350 else "All Good"
+    alert_message = (
+        "Routine bearing lubrication and vibration check advised." 
+        if status == "Maintenance Required" 
+        else "Pump operating under normal parameters."
+    )
 
     servicing_date = (datetime.now() + timedelta(days=12)).strftime("%B %d, %Y")
     breakdown_time = (datetime.now() + timedelta(days=15)).strftime("%B %d, %Y")
@@ -88,6 +144,7 @@ def get_pump_status():
         print(f"Error logging to CSV: {e}")
 
     return data
+
 
 if __name__ == "__main__":
     import uvicorn
