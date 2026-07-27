@@ -18,23 +18,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load ML Pipeline (Random Forest model) if it exists
+# Load ML Pipeline using memory mapping to prevent Out Of Memory (OOM) errors on cloud hosts
 model_path = "pump_rf_pipeline.pkl"
 if os.path.exists(model_path):
-    model = joblib.load(model_path)
+    try:
+        # mmap_mode='r' reads model from disk on-demand instead of clogging RAM
+        model = joblib.load(model_path, mmap_mode='r')
+    except Exception as e:
+        print(f"Error loading model with mmap: {e}")
+        model = None
 else:
     model = None
 
-# CSV Audit Log File setup
+# CSV Audit Log File setup (safely handled for cloud read-only filesystems)
 CSV_LOG_FILE = "pump_monitoring_log.csv"
-if not os.path.exists(CSV_LOG_FILE):
-    with open(CSV_LOG_FILE, mode="w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow([
-            "timestamp", "predicted_rul_hours", "actual_rul_hours", 
-            "calculated_efficiency", "vibration_velocity", "bearing_temp", 
-            "inlet_pressure", "status"
-        ])
+try:
+    if not os.path.exists(CSV_LOG_FILE):
+        with open(CSV_LOG_FILE, mode="w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                "timestamp", "predicted_rul_hours", "actual_rul_hours", 
+                "calculated_efficiency", "vibration_velocity", "bearing_temp", 
+                "inlet_pressure", "status"
+            ])
+except Exception as e:
+    print(f"CSV log file creation skipped/failed: {e}")
 
 @app.get("/api/pump/status")
 def get_pump_status():
@@ -68,7 +76,7 @@ def get_pump_status():
         "alert_message": alert_message
     }
 
-    # Log telemetry to CSV audit file
+    # Log telemetry to CSV audit file safely
     try:
         with open(CSV_LOG_FILE, mode="a", newline="") as f:
             writer = csv.writer(f)
@@ -80,3 +88,7 @@ def get_pump_status():
         print(f"Error logging to CSV: {e}")
 
     return data
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
