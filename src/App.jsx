@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer } from 'recharts';
 import { Activity, Thermometer, Gauge, AlertTriangle, Clock, ShieldCheck, AlertOctagon, Menu, X, FileText, Settings2, Database } from 'lucide-react';
+import { jsPDF } from "jspdf";
 
 const App = () => {
   const [equipment, setEquipment] = useState("pump"); // "pump" or "compressor"
@@ -80,10 +81,54 @@ const App = () => {
   const displayName = equipment === "pump" ? "Industrial Pump" : "Gas Compressor";
   const displayAsset = equipment === "pump" ? "CENTRIFUGAL_PUMP_01" : "RECIPROCATING_COMPRESSOR_01";
 
-  // Handle Report Form Submit
+  // Handle Report Form Submit (Generates and downloads PDF)
   const handleGenerateReport = (e) => {
     e.preventDefault();
-    alert("Report generation request sent to backend engine!");
+    
+    // Extract values from the form using the 'name' attributes
+    const formData = new FormData(e.target);
+    const selectedEquipment = formData.get("equipment") || equipment;
+    const fromDate = formData.get("fromDate");
+    const toDate = formData.get("toDate");
+
+    // Initialize PDF document
+    const doc = new jsPDF();
+    
+    // Add Header
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(18);
+    doc.text("IOCL Predictive Maintenance Report", 20, 20);
+    
+    // Add Sub-header lines
+    doc.setLineWidth(0.5);
+    doc.line(20, 25, 190, 25);
+    
+    // Add Data
+    doc.setFontSize(12);
+    doc.setFont("helvetica", "normal");
+    
+    doc.text(`Report Generated : ${new Date().toLocaleString()}`, 20, 35);
+    doc.text(`Equipment        : ${selectedEquipment === 'pump' ? 'CENTRIFUGAL PUMP 01' : 'GAS COMPRESSOR 01'}`, 20, 42);
+    doc.text(`Date Range       : ${fromDate} to ${toDate}`, 20, 49);
+    
+    doc.setFont("helvetica", "bold");
+    doc.text("CURRENT TELEMETRY SUMMARY", 20, 65);
+    doc.setLineWidth(0.2);
+    doc.line(20, 68, 100, 68);
+    
+    doc.setFont("helvetica", "normal");
+    doc.text(`Equipment Status       : ${machineData.status}`, 20, 78);
+    doc.text(`Predicted RUL          : ${machineData.predicted_rul_hours} Hours`, 20, 85);
+    doc.text(`Hydraulic Efficiency   : ${machineData.calculated_efficiency}%`, 20, 92);
+    doc.text(`Vibration Velocity     : ${machineData.vibration_velocity} mm/s`, 20, 99);
+    doc.text(`Bearing Temperature    : ${machineData.bearing_temp} °C`, 20, 106);
+    doc.text(`Inlet Pressure         : ${machineData.inlet_pressure} PSI`, 20, 113);
+    doc.text(`Suggested Servicing    : ${machineData.suggested_servicing_date}`, 20, 120);
+
+    // Save and trigger download
+    doc.save(`${selectedEquipment}_Report_${fromDate}_to_${toDate}.pdf`);
+    
+    // Close modal
     setIsReportModalOpen(false);
   };
 
@@ -287,7 +332,7 @@ const App = () => {
             <form onSubmit={handleGenerateReport} className="space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Target Equipment</label>
-                <select className="w-full bg-[#1e293b] border border-slate-700 text-white rounded-lg p-2.5 text-sm focus:outline-none focus:border-cyan-500">
+                <select name="equipment" defaultValue={equipment} className="w-full bg-[#1e293b] border border-slate-700 text-white rounded-lg p-2.5 text-sm focus:outline-none focus:border-cyan-500">
                   <option value="pump">Centrifugal Pump 01</option>
                   <option value="compressor">Gas Compressor 01</option>
                 </select>
@@ -295,11 +340,11 @@ const App = () => {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">From Date</label>
-                  <input type="date" required className="w-full bg-[#1e293b] border border-slate-700 text-white rounded-lg p-2.5 text-sm focus:outline-none focus:border-cyan-500" />
+                  <input type="date" name="fromDate" required className="w-full bg-[#1e293b] border border-slate-700 text-white rounded-lg p-2.5 text-sm focus:outline-none focus:border-cyan-500" />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">To Date</label>
-                  <input type="date" required className="w-full bg-[#1e293b] border border-slate-700 text-white rounded-lg p-2.5 text-sm focus:outline-none focus:border-cyan-500" />
+                  <input type="date" name="toDate" required className="w-full bg-[#1e293b] border border-slate-700 text-white rounded-lg p-2.5 text-sm focus:outline-none focus:border-cyan-500" />
                 </div>
               </div>
               <div className="pt-4">
