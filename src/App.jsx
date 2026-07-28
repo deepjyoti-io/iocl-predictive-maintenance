@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer } from 'recharts';
-import { Activity, Thermometer, Gauge, AlertTriangle, Clock, ShieldCheck } from 'lucide-react';
+import { Activity, Thermometer, Gauge, AlertTriangle, Clock, ShieldCheck, AlertOctagon } from 'lucide-react';
 
 const App = () => {
   const [pumpData, setPumpData] = useState({
@@ -12,7 +12,7 @@ const App = () => {
     vibration_velocity: 2.44,
     bearing_temp: 46.0,
     inlet_pressure: 50.2,
-    status: "Maintenance Required",
+    status: "MAINTENANCE REQUIRED",
     alert_level: "yellow",
     alert_message: "High vibration levels detected."
   });
@@ -44,7 +44,7 @@ const App = () => {
 
       } catch (err) {
         console.error("Backend offline:", err);
-        setError("Cannot connect to backend server. Make sure server.py is running!");
+        setError("Cannot connect to backend server. Make sure server is running!");
       }
     };
 
@@ -53,19 +53,32 @@ const App = () => {
     return () => clearInterval(interval);
   }, []);
 
-  // --- Dynamic Status Styling based on API alert_level ---
-  const getStatusBadge = (alertLevel) => {
-    switch (alertLevel) {
-      case "green":
-        return "bg-emerald-500/10 border-emerald-500/30 text-emerald-400";
-      case "yellow":
-        return "bg-amber-500/10 border-amber-500/40 text-amber-400";
-      case "red":
-        return "bg-red-500/10 border-red-500/40 text-red-400";
-      default:
-        return "bg-slate-500/10 border-slate-500/40 text-slate-400";
+  // --- Helper for Status Colors (Badge & Icons) ---
+  const getStatusTheme = (status, alertLevel) => {
+    // Priority check on status string or alert_level
+    if (status === "OPERATIONAL" || alertLevel === "green") {
+      return {
+        badge: "bg-emerald-500/10 border-emerald-500/40 text-emerald-400",
+        text: "text-emerald-400",
+        icon: <ShieldCheck className="w-4 h-4 text-emerald-400" />
+      };
+    } else if (status === "CRITICAL RISK" || alertLevel === "red") {
+      return {
+        badge: "bg-rose-500/15 border-rose-500/50 text-rose-400 animate-pulse",
+        text: "text-rose-400",
+        icon: <AlertOctagon className="w-4 h-4 text-rose-400" />
+      };
+    } else {
+      // Default to MAINTENANCE REQUIRED / Yellow
+      return {
+        badge: "bg-amber-500/10 border-amber-500/40 text-amber-400",
+        text: "text-amber-400",
+        icon: <AlertTriangle className="w-4 h-4 text-amber-400" />
+      };
     }
   };
+
+  const theme = getStatusTheme(pumpData.status, pumpData.alert_level);
 
   return (
     <div className="min-h-screen bg-[#070b14] text-slate-100 p-6 md:p-10 font-sans">
@@ -82,8 +95,8 @@ const App = () => {
           </div>
 
           <div className="flex items-center gap-3">
-            <div className={`px-4 py-2 rounded-lg border text-xs font-semibold uppercase tracking-wider flex items-center gap-2 ${getStatusBadge(pumpData.alert_level)}`}>
-              {pumpData.alert_level === "green" ? <ShieldCheck className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
+            <div className={`px-4 py-2 rounded-lg border text-xs font-bold uppercase tracking-wider flex items-center gap-2 transition-all duration-300 ${theme.badge}`}>
+              {theme.icon}
               <span>{pumpData.status}</span>
             </div>
           </div>
@@ -96,14 +109,14 @@ const App = () => {
           </div>
         )}
 
-        {/* --- Top Row: Key Performance Indicators (3 Columns) --- */}
+        {/* --- Top Row: Key Performance Indicators --- */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           
           {/* Card 1: Predicted RUL */}
           <div className="bg-[#0f172a] rounded-xl p-6 border border-slate-800/80 shadow-md flex flex-col justify-between">
             <p className="text-xs text-slate-400 font-medium uppercase tracking-wider">Predicted RUL</p>
             <div className="flex items-baseline gap-2 mt-4">
-              <span className="text-4xl font-extrabold text-amber-400 tracking-tight">
+              <span className={`text-4xl font-extrabold tracking-tight ${theme.text}`}>
                 {pumpData.predicted_rul_hours ? pumpData.predicted_rul_hours.toFixed(1) : "0.0"}
               </span>
               <span className="text-slate-400 font-semibold text-sm">hrs</span>
@@ -121,20 +134,20 @@ const App = () => {
             <div>
               <p className="text-xs text-slate-400 font-medium uppercase tracking-wider">Hydraulic Efficiency</p>
               <div className="flex items-baseline gap-1 mt-4">
-                <span className="text-4xl font-extrabold text-amber-400 tracking-tight">
+                <span className={`text-4xl font-extrabold tracking-tight ${theme.text}`}>
                   {pumpData.calculated_efficiency ? pumpData.calculated_efficiency.toFixed(1) : "0.0"}%
                 </span>
               </div>
               <p className="text-[11px] text-slate-500 mt-2">Calculated via Live Thermodynamic Engine</p>
             </div>
-            <div className="bg-slate-800/80 p-2.5 rounded-lg text-amber-400 border border-slate-700/50">
+            <div className="bg-slate-800/80 p-2.5 rounded-lg text-cyan-400 border border-slate-700/50">
               <Activity className="w-5 h-5" />
             </div>
           </div>
 
         </div>
 
-        {/* --- Middle Row: Live Sensor Telemetry (3 Columns) --- */}
+        {/* --- Middle Row: Live Sensor Telemetry --- */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           
           {/* Vibration Velocity */}
@@ -181,7 +194,7 @@ const App = () => {
 
         </div>
 
-        {/* --- Bottom Row: Real-time Charts (2 Equal Columns) --- */}
+        {/* --- Bottom Row: Real-time Charts --- */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           
           {/* Chart 1: RUL Trend */}
