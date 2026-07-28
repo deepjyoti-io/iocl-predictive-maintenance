@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, PieChart, Pie, Cell, ReferenceLine } from 'recharts';
-import { Activity, Thermometer, Gauge, AlertTriangle, Clock, ShieldCheck, AlertOctagon, Menu, X, FileText, Settings2, Database, Download, BellRing, CheckSquare } from 'lucide-react';
+import { Activity, Thermometer, Gauge, AlertTriangle, Clock, ShieldCheck, AlertOctagon, Menu, X, FileText, Settings2, Database, Download, BellRing, CheckSquare, ArrowRight, ArrowLeft } from 'lucide-react';
 import { jsPDF } from "jspdf";
 
 // --- Custom Semi-Circle Gauge Component (Enlarged Gauge Arc) ---
@@ -45,11 +45,25 @@ const SemiCircleGauge = ({ value, max, color, unit, label, icon: Icon }) => {
   );
 };
 
+// --- Available Sensors for Simulation ---
+const SENSOR_OPTIONS = [
+  { id: 'vibration', label: 'Vibration (mm/s)', optimal: 1.0, step: "0.01" },
+  { id: 'temperature', label: 'Temperature (°C)', optimal: 45.0, step: "0.1" },
+  { id: 'pressure', label: 'Pressure (PSI)', optimal: 50.0, step: "0.1" },
+  { id: 'flow_rate', label: 'Flow Rate (m³/h)', optimal: 120.0, step: "1" },
+  { id: 'motor_current', label: 'Motor Current (A)', optimal: 25.0, step: "0.1" },
+  { id: 'oil_level', label: 'Oil Level (%)', optimal: 85.0, step: "1" }
+];
+
 const App = () => {
   const [equipment, setEquipment] = useState("pump"); 
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  
+  // Simulation Modal States
   const [isSimulateModalOpen, setIsSimulateModalOpen] = useState(false);
+  const [simulationStep, setSimulationStep] = useState(1);
+  const [selectedSensors, setSelectedSensors] = useState([]);
   const [simulationResult, setSimulationResult] = useState(null);
   
   // New States for Alerts & Checklists
@@ -84,7 +98,6 @@ const App = () => {
 
   // Fetch Live Data Logic
   useEffect(() => {
-    // Reset states when switching machines
     setHistory([]); 
     setAlerts([]);
     setCheckedTasks({});
@@ -98,7 +111,6 @@ const App = () => {
         setMachineData(data);
         setError(null);
 
-        // Track History
         setHistory(prev => {
           const newPoint = { 
             time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), 
@@ -111,11 +123,9 @@ const App = () => {
           return [...prev, newPoint].slice(-20); 
         });
 
-        // Track Active Alerts
         if (data.status !== "OPERATIONAL") {
           setAlerts(prev => {
             const timestamp = new Date().toLocaleTimeString();
-            // Prevent exact duplicate spam
             if (prev.length > 0 && prev[0].time === timestamp) return prev;
             
             const newAlert = {
@@ -123,10 +133,9 @@ const App = () => {
               msg: `${data.status}: Anomaly detected on ${equipment.toUpperCase()} (Vib: ${data.vibration_velocity} mm/s, Temp: ${data.bearing_temp}°C)`,
               level: data.alert_level
             };
-            return [newAlert, ...prev].slice(0, 8); // Keep last 8 alerts
+            return [newAlert, ...prev].slice(0, 8);
           });
         }
-
       } catch (err) {
         console.error("Backend offline:", err);
         setError("Cannot connect to backend server. Make sure server is running!");
@@ -148,7 +157,6 @@ const App = () => {
   const displayName = equipment === "pump" ? "Industrial Pump" : "Gas Compressor";
   const displayAsset = equipment === "pump" ? "CENTRIFUGAL_PUMP_01" : "RECIPROCATING_COMPRESSOR_01";
 
-  // Checklists based on equipment
   const maintenanceTasks = equipment === "pump" 
     ? ["Check coupling alignment", "Replace mechanical seals", "Inspect bearing lubrication oil", "Verify suction strainer"]
     : ["Inspect suction/discharge valves", "Check cylinder lube rate", "Monitor intercooler pressure", "Drain knockout drums"];
@@ -157,14 +165,11 @@ const App = () => {
     setCheckedTasks(prev => ({ ...prev, [idx]: !prev[idx] }));
   };
 
-  // 2.b Client-Side CSV Export Function
   const handleExportCSV = () => {
     if (history.length === 0) return alert("No telemetry data available to export yet.");
-    
     const headers = ["Timestamp", "Predicted RUL (hrs)", "Efficiency (%)", "Vibration (mm/s)", "Temperature (C)", "Pressure (PSI)"];
     const rows = history.map(h => `${h.time},${h.rul},${h.efficiency},${h.vibration},${h.temperature},${h.pressure}`);
     const csvContent = [headers.join(","), ...rows].join("\n");
-    
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
@@ -173,7 +178,6 @@ const App = () => {
     setIsMenuOpen(false);
   };
 
-  // PDF Generation
   const handleGenerateReport = (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
@@ -207,17 +211,34 @@ const App = () => {
     setIsReportModalOpen(false);
   };
 
-  // Simulation Submit
+  // --- Multi-Step Simulation Logic ---
+  const openSimulateModal = () => {
+    setSimulationStep(1);
+    setSelectedSensors([]);
+    setSimulationResult(null);
+    setIsSimulateModalOpen(true);
+    setIsMenuOpen(false);
+  };
+
+  const handleSensorToggle = (id) => {
+    setSelectedSensors(prev => 
+      prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
+    );
+  };
+
   const handleSimulateData = async (e) => {
     e.preventDefault();
     setSimulationResult(null); 
     const formData = new FormData(e.target);
-    const targetEquipment = formData.get("equipment");
+    const targetEquipment = formData.get("equipment") || equipment;
+    
+    // Construct payload using inputs for selected sensors, and optimal baseline for unselected
     const payload = {
-      vibration: parseFloat(formData.get("vibration")),
-      temperature: parseFloat(formData.get("temperature")),
-      pressure: parseFloat(formData.get("pressure"))
+      vibration: selectedSensors.includes('vibration') ? parseFloat(formData.get("vibration")) : SENSOR_OPTIONS.find(s=>s.id==='vibration').optimal,
+      temperature: selectedSensors.includes('temperature') ? parseFloat(formData.get("temperature")) : SENSOR_OPTIONS.find(s=>s.id==='temperature').optimal,
+      pressure: selectedSensors.includes('pressure') ? parseFloat(formData.get("pressure")) : SENSOR_OPTIONS.find(s=>s.id==='pressure').optimal
     };
+
     try {
       const response = await fetch(`https://iocl-predictive-maintenance.onrender.com/api/${targetEquipment}/simulate`, {
         method: 'POST',
@@ -294,7 +315,7 @@ const App = () => {
                 <button onClick={handleExportCSV} className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:bg-slate-700/50 rounded-lg flex items-center gap-2">
                   <Download className="w-4 h-4 text-blue-400" /> Export Live Audit (CSV)
                 </button>
-                <button onClick={() => { setIsSimulateModalOpen(true); setIsMenuOpen(false); setSimulationResult(null); }} className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:bg-slate-700/50 rounded-lg flex items-center gap-2">
+                <button onClick={openSimulateModal} className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:bg-slate-700/50 rounded-lg flex items-center gap-2">
                   <Database className="w-4 h-4 text-cyan-400" /> Simulate Sensor Data
                 </button>
               </div>
@@ -396,10 +417,8 @@ const App = () => {
                   <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
                   <XAxis dataKey="time" stroke="#64748b" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
                   <YAxis stroke="#64748b" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} domain={[0, 'dataMax + 0.5']} />
-                  {/* 1.c Threshold Lines */}
                   <ReferenceLine y={4.5} stroke="#f43f5e" strokeDasharray="3 3" label={{ position: 'insideTopLeft', value: 'Critical (4.5)', fill: '#f43f5e', fontSize: 10 }} />
                   <ReferenceLine y={2.5} stroke="#f59e0b" strokeDasharray="3 3" label={{ position: 'insideTopLeft', value: 'Warning (2.5)', fill: '#f59e0b', fontSize: 10 }} />
-                  
                   <Line type="monotone" dataKey="vibration" stroke="#eab308" strokeWidth={2.5} dot={false} isAnimationActive={false} />
                 </LineChart>
               </ResponsiveContainer>
@@ -407,10 +426,8 @@ const App = () => {
           </div>
         </div>
 
-        {/* --- 2.a & 2.c Alerts and Checklist Row --- */}
+        {/* --- Alerts and Checklist Row --- */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 relative z-10">
-          
-          {/* Active Alert Log */}
           <div className="bg-[#0f172a] rounded-xl p-6 border border-slate-800/80 shadow-md h-64 overflow-hidden flex flex-col">
             <div className="flex items-center gap-2 mb-4">
               <BellRing className="w-4 h-4 text-rose-400" />
@@ -432,7 +449,6 @@ const App = () => {
             </div>
           </div>
 
-          {/* Maintenance Checklist (Conditional) */}
           <div className="bg-[#0f172a] rounded-xl p-6 border border-slate-800/80 shadow-md h-64 overflow-hidden flex flex-col">
             <div className="flex items-center gap-2 mb-4">
               <CheckSquare className="w-4 h-4 text-emerald-400" />
@@ -461,7 +477,6 @@ const App = () => {
             )}
           </div>
         </div>
-
       </div>
 
       {/* --- Generate Report Modal --- */}
@@ -500,66 +515,124 @@ const App = () => {
         </div>
       )}
 
-      {/* --- Simulate Data Modal --- */}
+      {/* --- Multi-Step Simulate Data Modal --- */}
       {isSimulateModalOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-[#0f172a] border border-slate-700 rounded-2xl w-full max-w-md p-6 shadow-2xl relative">
             <button onClick={() => setIsSimulateModalOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white">
               <X className="w-5 h-5" />
             </button>
-            <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2"><Database className="w-5 h-5 text-cyan-400"/> Simulate Sensor Data</h2>
-            <form onSubmit={handleSimulateData} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Test Model</label>
-                <select name="equipment" defaultValue={equipment} className="w-full bg-[#1e293b] border border-slate-700 text-white rounded-lg p-2.5 text-sm focus:outline-none focus:border-cyan-500">
-                  <option value="pump">Centrifugal Pump</option>
-                  <option value="compressor">Gas Compressor</option>
-                </select>
-              </div>
-              <div className="grid grid-cols-3 gap-4">
+            
+            <h2 className="text-xl font-bold text-white mb-2 flex items-center gap-2"><Database className="w-5 h-5 text-cyan-400"/> Simulate Sensor Data</h2>
+            <p className="text-xs text-slate-400 mb-6">Unselected sensors will be processed at optimal baseline conditions.</p>
+            
+            {/* Step 1: Select Sensors */}
+            {simulationStep === 1 && (
+              <div className="space-y-4">
                 <div>
-                  <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Vibration</label>
-                  <input type="number" step="0.01" name="vibration" required placeholder="1.0" className="w-full bg-[#1e293b] border border-slate-700 text-white rounded-lg p-2.5 text-sm focus:outline-none focus:border-cyan-500" />
+                  <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">1. Select Target Equipment</label>
+                  <select name="equipment_select" id="equipment_select" defaultValue={equipment} className="w-full bg-[#1e293b] border border-slate-700 text-white rounded-lg p-2.5 text-sm focus:outline-none focus:border-cyan-500">
+                    <option value="pump">Centrifugal Pump</option>
+                    <option value="compressor">Gas Compressor</option>
+                  </select>
                 </div>
+                
                 <div>
-                  <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Temp °C</label>
-                  <input type="number" step="0.1" name="temperature" required placeholder="50.0" className="w-full bg-[#1e293b] border border-slate-700 text-white rounded-lg p-2.5 text-sm focus:outline-none focus:border-cyan-500" />
+                  <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex justify-between">
+                    <span>2. Select at least 3 sensors</span>
+                    <span className={selectedSensors.length >= 3 ? "text-emerald-400" : "text-amber-400"}>{selectedSensors.length} Selected</span>
+                  </label>
+                  <div className="grid grid-cols-2 gap-3 max-h-48 overflow-y-auto pr-2">
+                    {SENSOR_OPTIONS.map(sensor => (
+                      <label key={sensor.id} className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                        selectedSensors.includes(sensor.id) ? 'bg-cyan-900/40 border-cyan-700 text-cyan-100' : 'bg-[#1e293b] border-slate-700 text-slate-300 hover:bg-slate-800'
+                      }`}>
+                        <input 
+                          type="checkbox" 
+                          className="w-4 h-4 accent-cyan-500 rounded bg-slate-900 border-slate-700" 
+                          checked={selectedSensors.includes(sensor.id)}
+                          onChange={() => handleSensorToggle(sensor.id)}
+                        />
+                        <span className="text-xs">{sensor.label}</span>
+                      </label>
+                    ))}
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Pressure PSI</label>
-                  <input type="number" step="0.1" name="pressure" required placeholder="48.0" className="w-full bg-[#1e293b] border border-slate-700 text-white rounded-lg p-2.5 text-sm focus:outline-none focus:border-cyan-500" />
-                </div>
-              </div>
-              <div className="pt-2">
-                <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-lg transition-colors">
-                  Run ML Prediction
-                </button>
-              </div>
-            </form>
-            {simulationResult && (
-              <div className="mt-6 p-4 bg-slate-800/50 border border-slate-700 rounded-xl">
-                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Simulation Output</h3>
-                <div className="flex justify-between items-center mb-3">
-                  <span className="text-sm text-slate-300">Predicted RUL:</span>
-                  <span className={`text-lg font-bold ${simulationResult.alert_level === 'green' ? 'text-emerald-400' : simulationResult.alert_level === 'yellow' ? 'text-amber-400' : 'text-rose-400'}`}>
-                    {simulationResult.simulated_rul} hrs
-                  </span>
-                </div>
-                <div className="flex justify-between items-center mb-3">
-                  <span className="text-sm text-slate-300">Est. Efficiency:</span>
-                  <span className="text-lg font-bold text-cyan-400">{simulationResult.simulated_efficiency}%</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-slate-300">System Status:</span>
-                  <span className={`px-2 py-1 text-[10px] font-bold uppercase rounded border ${
-                    simulationResult.alert_level === 'green' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/50' :
-                    simulationResult.alert_level === 'yellow' ? 'bg-amber-500/20 text-amber-400 border-amber-500/50' :
-                    'bg-rose-500/20 text-rose-400 border-rose-500/50 animate-pulse'
-                  }`}>
-                    {simulationResult.status}
-                  </span>
+
+                <div className="pt-4">
+                  <button 
+                    onClick={() => setSimulationStep(2)} 
+                    disabled={selectedSensors.length < 3}
+                    className={`w-full flex items-center justify-center gap-2 font-bold py-3 rounded-lg transition-colors ${
+                      selectedSensors.length >= 3 ? 'bg-cyan-600 hover:bg-cyan-500 text-white' : 'bg-slate-700 text-slate-500 cursor-not-allowed'
+                    }`}
+                  >
+                    Proceed to Input Values <ArrowRight className="w-4 h-4"/>
+                  </button>
                 </div>
               </div>
+            )}
+
+            {/* Step 2: Input Values & Result */}
+            {simulationStep === 2 && (
+              <form onSubmit={handleSimulateData} className="space-y-4">
+                <input type="hidden" name="equipment" value={document.getElementById('equipment_select')?.value || equipment} />
+                
+                <div className="flex items-center justify-between mb-4">
+                  <button type="button" onClick={() => {setSimulationStep(1); setSimulationResult(null);}} className="text-xs text-slate-400 hover:text-cyan-400 flex items-center gap-1">
+                    <ArrowLeft className="w-3 h-3"/> Back to Selection
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 max-h-56 overflow-y-auto pr-2">
+                  {SENSOR_OPTIONS.filter(s => selectedSensors.includes(s.id)).map(sensor => (
+                    <div key={sensor.id}>
+                      <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">{sensor.label}</label>
+                      <input 
+                        type="number" 
+                        step={sensor.step} 
+                        name={sensor.id} 
+                        required 
+                        defaultValue={sensor.optimal}
+                        className="w-full bg-[#1e293b] border border-slate-700 text-white rounded-lg p-2.5 text-sm focus:outline-none focus:border-cyan-500" 
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                <div className="pt-4">
+                  <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-lg transition-colors">
+                    Run ML Prediction
+                  </button>
+                </div>
+
+                {/* Display Simulation Results */}
+                {simulationResult && (
+                  <div className="mt-4 p-4 bg-slate-800/50 border border-slate-700 rounded-xl">
+                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Simulation Output</h3>
+                    <div className="flex justify-between items-center mb-3">
+                      <span className="text-sm text-slate-300">Predicted RUL:</span>
+                      <span className={`text-lg font-bold ${simulationResult.alert_level === 'green' ? 'text-emerald-400' : simulationResult.alert_level === 'yellow' ? 'text-amber-400' : 'text-rose-400'}`}>
+                        {simulationResult.simulated_rul} hrs
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center mb-3">
+                      <span className="text-sm text-slate-300">Est. Efficiency:</span>
+                      <span className="text-lg font-bold text-cyan-400">{simulationResult.simulated_efficiency}%</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-slate-300">System Status:</span>
+                      <span className={`px-2 py-1 text-[10px] font-bold uppercase rounded border ${
+                        simulationResult.alert_level === 'green' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/50' :
+                        simulationResult.alert_level === 'yellow' ? 'bg-amber-500/20 text-amber-400 border-amber-500/50' :
+                        'bg-rose-500/20 text-rose-400 border-rose-500/50 animate-pulse'
+                      }`}>
+                        {simulationResult.status}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </form>
             )}
           </div>
         </div>
