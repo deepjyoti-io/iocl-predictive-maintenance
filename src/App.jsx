@@ -53,32 +53,14 @@ const App = () => {
     return () => clearInterval(interval);
   }, []);
 
-  // --- Helper for Status Colors (Badge & Icons) ---
-  const getStatusTheme = (status, alertLevel) => {
-    // Priority check on status string or alert_level
-    if (status === "OPERATIONAL" || alertLevel === "green") {
-      return {
-        badge: "bg-emerald-500/10 border-emerald-500/40 text-emerald-400",
-        text: "text-emerald-400",
-        icon: <ShieldCheck className="w-4 h-4 text-emerald-400" />
-      };
-    } else if (status === "CRITICAL RISK" || alertLevel === "red") {
-      return {
-        badge: "bg-rose-500/15 border-rose-500/50 text-rose-400 animate-pulse",
-        text: "text-rose-400",
-        icon: <AlertOctagon className="w-4 h-4 text-rose-400" />
-      };
-    } else {
-      // Default to MAINTENANCE REQUIRED / Yellow
-      return {
-        badge: "bg-amber-500/10 border-amber-500/40 text-amber-400",
-        text: "text-amber-400",
-        icon: <AlertTriangle className="w-4 h-4 text-amber-400" />
-      };
-    }
+  // Helper function for KPI text color mapping
+  const getKpiTextColor = (status) => {
+    if (status === "OPERATIONAL") return "text-emerald-400";
+    if (status === "CRITICAL RISK") return "text-rose-400";
+    return "text-amber-400";
   };
 
-  const theme = getStatusTheme(pumpData.status, pumpData.alert_level);
+  const kpiColorClass = getKpiTextColor(pumpData.status);
 
   return (
     <div className="min-h-screen bg-[#070b14] text-slate-100 p-6 md:p-10 font-sans">
@@ -94,11 +76,28 @@ const App = () => {
             </div>
           </div>
 
+          {/* --- Explicitly Styled Badge Components for Tailwind Compilation --- */}
           <div className="flex items-center gap-3">
-            <div className={`px-4 py-2 rounded-lg border text-xs font-bold uppercase tracking-wider flex items-center gap-2 transition-all duration-300 ${theme.badge}`}>
-              {theme.icon}
-              <span>{pumpData.status}</span>
-            </div>
+            {pumpData.status === "OPERATIONAL" && (
+              <div className="px-4 py-2 rounded-lg border border-emerald-500/50 bg-emerald-500/20 text-emerald-400 text-xs font-bold uppercase tracking-wider flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                <span>OPERATIONAL</span>
+              </div>
+            )}
+
+            {pumpData.status === "MAINTENANCE REQUIRED" && (
+              <div className="px-4 py-2 rounded-lg border border-amber-500/50 bg-amber-500/20 text-amber-400 text-xs font-bold uppercase tracking-wider flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-400" />
+                <span>MAINTENANCE REQUIRED</span>
+              </div>
+            )}
+
+            {(pumpData.status === "CRITICAL RISK" || !["OPERATIONAL", "MAINTENANCE REQUIRED"].includes(pumpData.status)) && (
+              <div className="px-4 py-2 rounded-lg border border-rose-500/80 bg-rose-500/20 text-rose-400 text-xs font-bold uppercase tracking-wider flex items-center gap-2 animate-pulse">
+                <AlertOctagon className="w-4 h-4 text-rose-400" />
+                <span>CRITICAL RISK</span>
+              </div>
+            )}
           </div>
         </header>
 
@@ -116,7 +115,7 @@ const App = () => {
           <div className="bg-[#0f172a] rounded-xl p-6 border border-slate-800/80 shadow-md flex flex-col justify-between">
             <p className="text-xs text-slate-400 font-medium uppercase tracking-wider">Predicted RUL</p>
             <div className="flex items-baseline gap-2 mt-4">
-              <span className={`text-4xl font-extrabold tracking-tight ${theme.text}`}>
+              <span className={`text-4xl font-extrabold tracking-tight ${kpiColorClass}`}>
                 {pumpData.predicted_rul_hours ? pumpData.predicted_rul_hours.toFixed(1) : "0.0"}
               </span>
               <span className="text-slate-400 font-semibold text-sm">hrs</span>
@@ -134,7 +133,7 @@ const App = () => {
             <div>
               <p className="text-xs text-slate-400 font-medium uppercase tracking-wider">Hydraulic Efficiency</p>
               <div className="flex items-baseline gap-1 mt-4">
-                <span className={`text-4xl font-extrabold tracking-tight ${theme.text}`}>
+                <span className={`text-4xl font-extrabold tracking-tight ${kpiColorClass}`}>
                   {pumpData.calculated_efficiency ? pumpData.calculated_efficiency.toFixed(1) : "0.0"}%
                 </span>
               </div>
