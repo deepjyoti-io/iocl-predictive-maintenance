@@ -53,15 +53,6 @@ const App = () => {
     return () => clearInterval(interval);
   }, []);
 
-  // Helper function for KPI text color mapping
-  const getKpiTextColor = (status) => {
-    if (status === "OPERATIONAL") return "text-emerald-400";
-    if (status === "CRITICAL RISK") return "text-rose-400";
-    return "text-amber-400";
-  };
-
-  const kpiColorClass = getKpiTextColor(pumpData.status);
-
   return (
     <div className="min-h-screen bg-[#070b14] text-slate-100 p-6 md:p-10 font-sans">
       <div className="max-w-7xl mx-auto space-y-6">
@@ -76,7 +67,7 @@ const App = () => {
             </div>
           </div>
 
-          {/* --- Explicitly Styled Badge Components for Tailwind Compilation --- */}
+          {/* --- Explicit Header Badge Styling --- */}
           <div className="flex items-center gap-3">
             {pumpData.status === "OPERATIONAL" && (
               <div className="px-4 py-2 rounded-lg border border-emerald-500/50 bg-emerald-500/20 text-emerald-400 text-xs font-bold uppercase tracking-wider flex items-center gap-2">
@@ -111,11 +102,11 @@ const App = () => {
         {/* --- Top Row: Key Performance Indicators --- */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           
-          {/* Card 1: Predicted RUL */}
+          {/* Card 1: Predicted RUL (Locked to Amber) */}
           <div className="bg-[#0f172a] rounded-xl p-6 border border-slate-800/80 shadow-md flex flex-col justify-between">
             <p className="text-xs text-slate-400 font-medium uppercase tracking-wider">Predicted RUL</p>
             <div className="flex items-baseline gap-2 mt-4">
-              <span className={`text-4xl font-extrabold tracking-tight ${kpiColorClass}`}>
+              <span className="text-4xl font-extrabold tracking-tight text-amber-400">
                 {pumpData.predicted_rul_hours ? pumpData.predicted_rul_hours.toFixed(1) : "0.0"}
               </span>
               <span className="text-slate-400 font-semibold text-sm">hrs</span>
@@ -128,12 +119,12 @@ const App = () => {
             <p className="text-2xl font-bold text-white mt-4">{pumpData.suggested_servicing_date}</p>
           </div>
 
-          {/* Card 3: Hydraulic Efficiency */}
+          {/* Card 3: Hydraulic Efficiency (Locked to Cyan) */}
           <div className="bg-[#0f172a] rounded-xl p-6 border border-slate-800/80 shadow-md flex justify-between items-start">
             <div>
               <p className="text-xs text-slate-400 font-medium uppercase tracking-wider">Hydraulic Efficiency</p>
               <div className="flex items-baseline gap-1 mt-4">
-                <span className={`text-4xl font-extrabold tracking-tight ${kpiColorClass}`}>
+                <span className="text-4xl font-extrabold tracking-tight text-cyan-400">
                   {pumpData.calculated_efficiency ? pumpData.calculated_efficiency.toFixed(1) : "0.0"}%
                 </span>
               </div>
