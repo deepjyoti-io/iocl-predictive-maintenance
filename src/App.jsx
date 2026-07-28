@@ -45,15 +45,25 @@ const SemiCircleGauge = ({ value, max, color, unit, label, icon: Icon }) => {
   );
 };
 
-// --- Available Sensors for Simulation ---
-const SENSOR_OPTIONS = [
-  { id: 'vibration', label: 'Vibration (mm/s)', optimal: 1.0, step: "0.01" },
-  { id: 'temperature', label: 'Temperature (°C)', optimal: 45.0, step: "0.1" },
-  { id: 'pressure', label: 'Pressure (PSI)', optimal: 50.0, step: "0.1" },
-  { id: 'flow_rate', label: 'Flow Rate (m³/h)', optimal: 120.0, step: "1" },
-  { id: 'motor_current', label: 'Motor Current (A)', optimal: 25.0, step: "0.1" },
-  { id: 'oil_level', label: 'Oil Level (%)', optimal: 85.0, step: "1" }
-];
+// --- Machine-Specific Telemetry Configurations ---
+const EQUIPMENT_SENSORS = {
+  pump: [
+    { id: 'vibration', label: 'Vibration Velocity (mm/s)', optimal: 1.0, step: "0.01" },
+    { id: 'temperature', label: 'Bearing Temp (°C)', optimal: 45.0, step: "0.1" },
+    { id: 'pressure', label: 'Suction Pressure (PSI)', optimal: 50.0, step: "0.1" },
+    { id: 'flow_rate', label: 'Discharge Flow (m³/h)', optimal: 120.0, step: "1" },
+    { id: 'motor_current', label: 'Motor Current (A)', optimal: 25.0, step: "0.1" },
+    { id: 'seal_oil_level', label: 'Mechanical Seal Level (%)', optimal: 90.0, step: "1" }
+  ],
+  compressor: [
+    { id: 'vibration', label: 'Frame Vibration (mm/s)', optimal: 1.2, step: "0.01" },
+    { id: 'temperature', label: 'Cylinder Discharge Temp (°C)', optimal: 85.0, step: "0.1" },
+    { id: 'pressure', label: 'Interstage Pressure (PSI)', optimal: 140.0, step: "0.1" },
+    { id: 'crosshead_temp', label: 'Crosshead Pin Temp (°C)', optimal: 65.0, step: "0.1" },
+    { id: 'lube_box_level', label: 'Lubricator Box Level (%)', optimal: 85.0, step: "1" },
+    { id: 'rod_drop', label: 'Piston Rod Wear Drop (mm)', optimal: 0.05, step: "0.01" }
+  ]
+};
 
 const App = () => {
   const [equipment, setEquipment] = useState("pump"); 
@@ -62,11 +72,12 @@ const App = () => {
   
   // Simulation Modal States
   const [isSimulateModalOpen, setIsSimulateModalOpen] = useState(false);
+  const [selectedSimEquipment, setSelectedSimEquipment] = useState("pump");
   const [simulationStep, setSimulationStep] = useState(1);
   const [selectedSensors, setSelectedSensors] = useState([]);
   const [simulationResult, setSimulationResult] = useState(null);
   
-  // New States for Alerts & Checklists
+  // States for Alerts & Checklists
   const [alerts, setAlerts] = useState([]);
   const [checkedTasks, setCheckedTasks] = useState({});
   
@@ -214,10 +225,16 @@ const App = () => {
   // --- Multi-Step Simulation Logic ---
   const openSimulateModal = () => {
     setSimulationStep(1);
+    setSelectedSimEquipment(equipment);
     setSelectedSensors([]);
     setSimulationResult(null);
     setIsSimulateModalOpen(true);
     setIsMenuOpen(false);
+  };
+
+  const handleEquipmentChange = (e) => {
+    setSelectedSimEquipment(e.target.value);
+    setSelectedSensors([]); // Clear selections when changing target machine
   };
 
   const handleSensorToggle = (id) => {
@@ -230,17 +247,17 @@ const App = () => {
     e.preventDefault();
     setSimulationResult(null); 
     const formData = new FormData(e.target);
-    const targetEquipment = formData.get("equipment") || equipment;
+    const availableSensors = EQUIPMENT_SENSORS[selectedSimEquipment];
     
-    // Construct payload using inputs for selected sensors, and optimal baseline for unselected
+    // Construct payload: chosen inputs get user data, unchosen get baseline values
     const payload = {
-      vibration: selectedSensors.includes('vibration') ? parseFloat(formData.get("vibration")) : SENSOR_OPTIONS.find(s=>s.id==='vibration').optimal,
-      temperature: selectedSensors.includes('temperature') ? parseFloat(formData.get("temperature")) : SENSOR_OPTIONS.find(s=>s.id==='temperature').optimal,
-      pressure: selectedSensors.includes('pressure') ? parseFloat(formData.get("pressure")) : SENSOR_OPTIONS.find(s=>s.id==='pressure').optimal
+      vibration: selectedSensors.includes('vibration') ? parseFloat(formData.get("vibration")) : availableSensors.find(s => s.id === 'vibration').optimal,
+      temperature: selectedSensors.includes('temperature') ? parseFloat(formData.get("temperature")) : availableSensors.find(s => s.id === 'temperature').optimal,
+      pressure: selectedSensors.includes('pressure') ? parseFloat(formData.get("pressure")) : availableSensors.find(s => s.id === 'pressure').optimal
     };
 
     try {
-      const response = await fetch(`https://iocl-predictive-maintenance.onrender.com/api/${targetEquipment}/simulate`, {
+      const response = await fetch(`https://iocl-predictive-maintenance.onrender.com/api/${selectedSimEquipment}/simulate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -253,6 +270,8 @@ const App = () => {
       alert("Failed to reach simulation engine. Make sure server is running.");
     }
   };
+
+  const activeSensorList = EQUIPMENT_SENSORS[selectedSimEquipment] || [];
 
   return (
     <div className="min-h-screen bg-[#070b14] text-slate-100 p-6 md:p-10 font-sans relative">
@@ -359,7 +378,7 @@ const App = () => {
           </div>
         </div>
 
-        {/* --- 1.b Middle Row: Radial Gauge Sensor Telemetry --- */}
+        {/* --- Middle Row: Radial Gauge Sensor Telemetry --- */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 relative z-10">
           <SemiCircleGauge 
             label="Vibration Velocity" 
@@ -531,7 +550,11 @@ const App = () => {
               <div className="space-y-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">1. Select Target Equipment</label>
-                  <select name="equipment_select" id="equipment_select" defaultValue={equipment} className="w-full bg-[#1e293b] border border-slate-700 text-white rounded-lg p-2.5 text-sm focus:outline-none focus:border-cyan-500">
+                  <select 
+                    value={selectedSimEquipment} 
+                    onChange={handleEquipmentChange}
+                    className="w-full bg-[#1e293b] border border-slate-700 text-white rounded-lg p-2.5 text-sm focus:outline-none focus:border-cyan-500"
+                  >
                     <option value="pump">Centrifugal Pump</option>
                     <option value="compressor">Gas Compressor</option>
                   </select>
@@ -543,7 +566,7 @@ const App = () => {
                     <span className={selectedSensors.length >= 3 ? "text-emerald-400" : "text-amber-400"}>{selectedSensors.length} Selected</span>
                   </label>
                   <div className="grid grid-cols-2 gap-3 max-h-48 overflow-y-auto pr-2">
-                    {SENSOR_OPTIONS.map(sensor => (
+                    {activeSensorList.map(sensor => (
                       <label key={sensor.id} className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
                         selectedSensors.includes(sensor.id) ? 'bg-cyan-900/40 border-cyan-700 text-cyan-100' : 'bg-[#1e293b] border-slate-700 text-slate-300 hover:bg-slate-800'
                       }`}>
@@ -576,16 +599,15 @@ const App = () => {
             {/* Step 2: Input Values & Result */}
             {simulationStep === 2 && (
               <form onSubmit={handleSimulateData} className="space-y-4">
-                <input type="hidden" name="equipment" value={document.getElementById('equipment_select')?.value || equipment} />
-                
                 <div className="flex items-center justify-between mb-4">
                   <button type="button" onClick={() => {setSimulationStep(1); setSimulationResult(null);}} className="text-xs text-slate-400 hover:text-cyan-400 flex items-center gap-1">
                     <ArrowLeft className="w-3 h-3"/> Back to Selection
                   </button>
+                  <span className="text-xs font-mono text-cyan-400 uppercase">{selectedSimEquipment} SIMULATION</span>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4 max-h-56 overflow-y-auto pr-2">
-                  {SENSOR_OPTIONS.filter(s => selectedSensors.includes(s.id)).map(sensor => (
+                  {activeSensorList.filter(s => selectedSensors.includes(s.id)).map(sensor => (
                     <div key={sensor.id}>
                       <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">{sensor.label}</label>
                       <input 
