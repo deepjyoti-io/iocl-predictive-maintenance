@@ -18,22 +18,36 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global index tracker to step through test_stream.json sequentially
+# Base directory path to avoid file location issues on Render
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Global stream tracker
 stream_index = 0
+stream_data_cache = []
+
+# Load test_stream.json cleanly at startup
+stream_file_path = os.path.join(BASE_DIR, "test_stream.json")
+if os.path.exists(stream_file_path):
+    try:
+        with open(stream_file_path, "r") as f:
+            stream_data_cache = json.load(f)
+            print(f"Successfully loaded {len(stream_data_cache)} telemetry frames.")
+    except Exception as e:
+        print(f"Error reading {stream_file_path}: {e}")
+else:
+    print(f"WARNING: {stream_file_path} not found!")
 
 # Load ML Pipeline using memory mapping
-model_path = "pump_rf_pipeline.pkl"
+model_path = os.path.join(BASE_DIR, "pump_rf_pipeline.pkl")
+model = None
 if os.path.exists(model_path):
     try:
         model = joblib.load(model_path, mmap_mode='r')
     except Exception as e:
         print(f"Error loading model with mmap: {e}")
-        model = None
-else:
-    model = None
 
 # CSV Audit Log File setup
-CSV_LOG_FILE = "pump_monitoring_log.csv"
+CSV_LOG_FILE = os.path.join(BASE_DIR, "pump_monitoring_log.csv")
 try:
     if not os.path.exists(CSV_LOG_FILE):
         with open(CSV_LOG_FILE, mode="w", newline="") as f:
@@ -44,46 +58,34 @@ try:
                 "inlet_pressure", "status"
             ])
 except Exception as e:
-    print(f"CSV log file creation skipped/failed: {e}")
-
-
-def load_stream_data():
-    """Helper to load test_stream.json safely."""
-    stream_file = "test_stream.json"
-    if os.path.exists(stream_file):
-        try:
-            with open(stream_file, "r") as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"Error reading {stream_file}: {e}")
-    return []
+    print(f"CSV log file creation skipped: {e}")
 
 
 @app.get("/")
 def read_root():
-    return {"status": "IOCL Pump Telemetry API is Live!"}
+    return {
+        "status": "IOCL Pump Telemetry API is Live!",
+        "stream_samples_loaded": len(stream_data_cache)
+    }
 
 
 @app.get("/api/pump/status")
 def get_pump_status():
     global stream_index
     
-    stream_data = load_stream_data()
-    
-    if stream_data:
-        # Loop back to the beginning if we reach the end of the JSON array
-        current_sample = stream_data[stream_index % len(stream_data)]
+    if stream_data_cache:
+        # Step to next sample in array
+        current_sample = stream_data_cache[stream_index % len(stream_data_cache)]
         stream_index += 1
         
-        # Extract features from JSON (handles both direct key names and sensor names)
-        vibration = round(current_sample.get("vibration_velocity", current_sample.get("vibration", 1.01)), 2)
-        bearing_temp = round(current_sample.get("bearing_temp", current_sample.get("temperature", 50.3)), 1)
-        inlet_pressure = round(current_sample.get("inlet_pressure", current_sample.get("pressure", 48.3)), 1)
+        # Extract features (flexible key lookup)
+        vibration = round(float(current_sample.get("vibration_velocity", current_sample.get("vibration", 1.01))), 2)
+        bearing_temp = round(float(current_sample.get("bearing_temp", current_sample.get("temperature", 50.3))), 1)
+        inlet_pressure = round(float(current_sample.get("inlet_pressure", current_sample.get("pressure", 48.3))), 1)
         
-        # Run ML Prediction if model exists, otherwise extract or calculate fallback
+        # Predict using ML model if available
         if model is not None:
             try:
-                # Prepare DataFrame for model input
                 input_df = pd.DataFrame([{
                     "vibration_velocity": vibration,
                     "bearing_temp": bearing_temp,
@@ -92,15 +94,15 @@ def get_pump_status():
                 predicted_rul = round(float(model.predict(input_df)[0]), 1)
             except Exception as e:
                 print(f"Prediction error: {e}")
-                predicted_rul = round(current_sample.get("predicted_rul_hours", current_sample.get("rul", 338.3)), 1)
+                predicted_rul = round(float(current_sample.get("predicted_rul_hours", current_sample.get("rul", 338.3))), 1)
         else:
-            predicted_rul = round(current_sample.get("predicted_rul_hours", current_sample.get("rul", 338.3)), 1)
+            predicted_rul = round(float(current_sample.get("predicted_rul_hours", current_sample.get("rul", 338.3))), 1)
             
-        actual_rul = round(current_sample.get("actual_rul_hours", predicted_rul), 1)
-        efficiency = round(current_sample.get("calculated_efficiency", current_sample.get("efficiency", 81.1)), 1)
+        actual_rul = round(float(current_sample.get("actual_rul_hours", predicted_rul)), 1)
+        efficiency = round(float(current_sample.get("calculated_efficiency", current_sample.get("efficiency", 81.1))), 1)
 
     else:
-        # Fallback if test_stream.json is missing or empty
+        # Static fallback if JSON file is missing
         predicted_rul = 338.3
         actual_rul = 338.3
         efficiency = 81.1
@@ -108,7 +110,6 @@ def get_pump_status():
         bearing_temp = 50.3
         inlet_pressure = 48.3
 
-    # Dynamic status evaluation based on prediction threshold
     status = "Maintenance Required" if predicted_rul < 350 else "All Good"
     alert_message = (
         "Routine bearing lubrication and vibration check advised." 
@@ -132,7 +133,7 @@ def get_pump_status():
         "alert_message": alert_message
     }
 
-    # Log telemetry to CSV audit file safely
+    # Log telemetry to CSV
     try:
         with open(CSV_LOG_FILE, mode="a", newline="") as f:
             writer = csv.writer(f)
@@ -141,7 +142,7 @@ def get_pump_status():
                 efficiency, vibration, bearing_temp, inlet_pressure, status
             ])
     except Exception as e:
-        print(f"Error logging to CSV: {e}")
+        pass
 
     return data
 
