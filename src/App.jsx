@@ -1,7 +1,49 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer } from 'recharts';
-import { Activity, Thermometer, Gauge, AlertTriangle, Clock, ShieldCheck, AlertOctagon, Menu, X, FileText, Settings2, Database } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, PieChart, Pie, Cell, ReferenceLine } from 'recharts';
+import { Activity, Thermometer, Gauge, AlertTriangle, Clock, ShieldCheck, AlertOctagon, Menu, X, FileText, Settings2, Database, Download, BellRing, CheckSquare } from 'lucide-react';
 import { jsPDF } from "jspdf";
+
+// --- Custom Semi-Circle Gauge Component ---
+const SemiCircleGauge = ({ value, max, color, unit, label, icon: Icon }) => {
+  const percentage = Math.min(value / max, 1);
+  const data = [
+    { name: 'Value', value: percentage },
+    { name: 'Empty', value: 1 - percentage }
+  ];
+  return (
+    <div className="bg-[#0f172a] rounded-xl p-5 border border-slate-800/80 shadow-sm flex flex-col items-center relative overflow-hidden">
+      <div className="w-full flex items-center gap-2 mb-2">
+        <Icon className="w-4 h-4" style={{ color: color }} />
+        <p className="text-xs text-slate-400 font-medium">{label}</p>
+      </div>
+      <div className="w-full h-24 relative mt-2">
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie
+              data={data}
+              cx="50%"
+              cy="100%"
+              startAngle={180}
+              endAngle={0}
+              innerRadius="70%"
+              outerRadius="100%"
+              dataKey="value"
+              stroke="none"
+              isAnimationActive={false}
+            >
+              <Cell fill={color} />
+              <Cell fill="#1e293b" />
+            </Pie>
+          </PieChart>
+        </ResponsiveContainer>
+        <div className="absolute bottom-0 w-full flex flex-col items-center">
+          <span className="text-2xl font-bold text-white leading-none">{value.toFixed(1)}</span>
+          <span className="text-[10px] text-slate-400 mt-1">{unit}</span>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const App = () => {
   const [equipment, setEquipment] = useState("pump"); 
@@ -9,6 +51,10 @@ const App = () => {
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [isSimulateModalOpen, setIsSimulateModalOpen] = useState(false);
   const [simulationResult, setSimulationResult] = useState(null);
+  
+  // New States for Alerts & Checklists
+  const [alerts, setAlerts] = useState([]);
+  const [checkedTasks, setCheckedTasks] = useState({});
   
   const [machineData, setMachineData] = useState({
     predicted_rul_hours: 0,
@@ -38,7 +84,11 @@ const App = () => {
 
   // Fetch Live Data Logic
   useEffect(() => {
+    // Reset states when switching machines
     setHistory([]); 
+    setAlerts([]);
+    setCheckedTasks({});
+
     const fetchStatus = async () => {
       try {
         const response = await fetch(`https://iocl-predictive-maintenance.onrender.com/api/${equipment}/status`);
@@ -48,15 +98,35 @@ const App = () => {
         setMachineData(data);
         setError(null);
 
+        // Track History
         setHistory(prev => {
           const newPoint = { 
             time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), 
             rul: data.predicted_rul_hours, 
-            vibration: data.vibration_velocity 
+            vibration: data.vibration_velocity,
+            temperature: data.bearing_temp,
+            pressure: data.inlet_pressure,
+            efficiency: data.calculated_efficiency
           };
-          const newHistory = [...prev, newPoint];
-          return newHistory.slice(-20); 
+          return [...prev, newPoint].slice(-20); 
         });
+
+        // Track Active Alerts
+        if (data.status !== "OPERATIONAL") {
+          setAlerts(prev => {
+            const timestamp = new Date().toLocaleTimeString();
+            // Prevent exact duplicate spam
+            if (prev.length > 0 && prev[0].time === timestamp) return prev;
+            
+            const newAlert = {
+              time: timestamp,
+              msg: `${data.status}: Anomaly detected on ${equipment.toUpperCase()} (Vib: ${data.vibration_velocity} mm/s, Temp: ${data.bearing_temp}°C)`,
+              level: data.alert_level
+            };
+            return [newAlert, ...prev].slice(0, 8); // Keep last 8 alerts
+          });
+        }
+
       } catch (err) {
         console.error("Backend offline:", err);
         setError("Cannot connect to backend server. Make sure server is running!");
@@ -78,7 +148,32 @@ const App = () => {
   const displayName = equipment === "pump" ? "Industrial Pump" : "Gas Compressor";
   const displayAsset = equipment === "pump" ? "CENTRIFUGAL_PUMP_01" : "RECIPROCATING_COMPRESSOR_01";
 
-  // Handle PDF Report Download
+  // Checklists based on equipment
+  const maintenanceTasks = equipment === "pump" 
+    ? ["Check coupling alignment", "Replace mechanical seals", "Inspect bearing lubrication oil", "Verify suction strainer"]
+    : ["Inspect suction/discharge valves", "Check cylinder lube rate", "Monitor intercooler pressure", "Drain knockout drums"];
+
+  const toggleTask = (idx) => {
+    setCheckedTasks(prev => ({ ...prev, [idx]: !prev[idx] }));
+  };
+
+  // 2.b Client-Side CSV Export Function
+  const handleExportCSV = () => {
+    if (history.length === 0) return alert("No telemetry data available to export yet.");
+    
+    const headers = ["Timestamp", "Predicted RUL (hrs)", "Efficiency (%)", "Vibration (mm/s)", "Temperature (C)", "Pressure (PSI)"];
+    const rows = history.map(h => `${h.time},${h.rul},${h.efficiency},${h.vibration},${h.temperature},${h.pressure}`);
+    const csvContent = [headers.join(","), ...rows].join("\n");
+    
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `${equipment}_live_audit_log_${new Date().getTime()}.csv`;
+    link.click();
+    setIsMenuOpen(false);
+  };
+
+  // PDF Generation
   const handleGenerateReport = (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
@@ -90,21 +185,17 @@ const App = () => {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(18);
     doc.text("IOCL Predictive Maintenance Report", 20, 20);
-    
     doc.setLineWidth(0.5);
     doc.line(20, 25, 190, 25);
-    
     doc.setFontSize(12);
     doc.setFont("helvetica", "normal");
     doc.text(`Report Generated : ${new Date().toLocaleString()}`, 20, 35);
     doc.text(`Equipment        : ${selectedEquipment === 'pump' ? 'CENTRIFUGAL PUMP 01' : 'GAS COMPRESSOR 01'}`, 20, 42);
     doc.text(`Date Range       : ${fromDate} to ${toDate}`, 20, 49);
-    
     doc.setFont("helvetica", "bold");
     doc.text("CURRENT TELEMETRY SUMMARY", 20, 65);
     doc.setLineWidth(0.2);
     doc.line(20, 68, 100, 68);
-    
     doc.setFont("helvetica", "normal");
     doc.text(`Equipment Status       : ${machineData.status}`, 20, 78);
     doc.text(`Predicted RUL          : ${machineData.predicted_rul_hours} Hours`, 20, 85);
@@ -112,26 +203,21 @@ const App = () => {
     doc.text(`Vibration Velocity     : ${machineData.vibration_velocity} mm/s`, 20, 99);
     doc.text(`Bearing Temperature    : ${machineData.bearing_temp} °C`, 20, 106);
     doc.text(`Inlet Pressure         : ${machineData.inlet_pressure} PSI`, 20, 113);
-    doc.text(`Suggested Servicing    : ${machineData.suggested_servicing_date}`, 20, 120);
-
     doc.save(`${selectedEquipment}_Report_${fromDate}_to_${toDate}.pdf`);
     setIsReportModalOpen(false);
   };
 
-  // Handle Simulation Data Submit
+  // Simulation Submit
   const handleSimulateData = async (e) => {
     e.preventDefault();
-    setSimulationResult(null); // reset previous result
-    
+    setSimulationResult(null); 
     const formData = new FormData(e.target);
     const targetEquipment = formData.get("equipment");
-    
     const payload = {
       vibration: parseFloat(formData.get("vibration")),
       temperature: parseFloat(formData.get("temperature")),
       pressure: parseFloat(formData.get("pressure"))
     };
-
     try {
       const response = await fetch(`https://iocl-predictive-maintenance.onrender.com/api/${targetEquipment}/simulate`, {
         method: 'POST',
@@ -139,7 +225,6 @@ const App = () => {
         body: JSON.stringify(payload)
       });
       if (!response.ok) throw new Error("Simulation request failed");
-      
       const data = await response.json();
       setSimulationResult(data);
     } catch (err) {
@@ -158,7 +243,7 @@ const App = () => {
             <Activity className="w-7 h-7 text-cyan-400" />
             <div>
               <h1 className="text-xl md:text-2xl font-bold tracking-wide">{displayName} Predictive Monitor</h1>
-              <p className="text-xs text-cyan-400 mt-1 font-mono font-medium">Asset: {displayAsset}</p>
+              <p className="text-xs text-cyan-400 mt-1 font-mono font-medium">Asset: {displayAsset} | Unit: Guwahati Refinery</p>
             </div>
           </div>
 
@@ -182,10 +267,7 @@ const App = () => {
               </div>
             )}
 
-            <button 
-              onClick={() => setIsMenuOpen(!isMenuOpen)} 
-              className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700 transition-colors"
-            >
+            <button onClick={() => setIsMenuOpen(!isMenuOpen)} className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700 transition-colors">
               {isMenuOpen ? <X className="w-5 h-5 text-slate-300" /> : <Menu className="w-5 h-5 text-slate-300" />}
             </button>
           </div>
@@ -207,10 +289,13 @@ const App = () => {
               <div className="p-3">
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Actions</p>
                 <button onClick={() => { setIsReportModalOpen(true); setIsMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:bg-slate-700/50 rounded-lg flex items-center gap-2">
-                  <FileText className="w-4 h-4" /> Generate Report
+                  <FileText className="w-4 h-4 text-emerald-400" /> Generate PDF Report
+                </button>
+                <button onClick={handleExportCSV} className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:bg-slate-700/50 rounded-lg flex items-center gap-2">
+                  <Download className="w-4 h-4 text-blue-400" /> Export Live Audit (CSV)
                 </button>
                 <button onClick={() => { setIsSimulateModalOpen(true); setIsMenuOpen(false); setSimulationResult(null); }} className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:bg-slate-700/50 rounded-lg flex items-center gap-2">
-                  <Database className="w-4 h-4 text-cyan-400" /> Simulate Data
+                  <Database className="w-4 h-4 text-cyan-400" /> Simulate Sensor Data
                 </button>
               </div>
             </div>
@@ -228,7 +313,7 @@ const App = () => {
           <div className="bg-[#0f172a] rounded-xl p-6 border border-slate-800/80 shadow-md flex flex-col justify-between">
             <p className="text-xs text-slate-400 font-medium uppercase tracking-wider">Predicted RUL</p>
             <div className="flex items-baseline gap-2 mt-4">
-              <span className={`text-4xl font-extrabold tracking-tight ${kpiColorClass}`}>
+              <span className={`text-5xl font-extrabold tracking-tight ${kpiColorClass}`}>
                 {machineData.predicted_rul_hours ? machineData.predicted_rul_hours.toFixed(1) : "0.0"}
               </span>
               <span className="text-slate-400 font-semibold text-sm">hrs</span>
@@ -250,49 +335,35 @@ const App = () => {
               </div>
               <p className="text-[11px] text-slate-500 mt-2">Calculated via Live Thermodynamic Engine</p>
             </div>
-            <div className="bg-slate-800/80 p-2.5 rounded-lg text-cyan-400 border border-slate-700/50">
-              <Activity className="w-5 h-5" />
-            </div>
           </div>
         </div>
 
-        {/* --- Middle Row: Live Sensor Telemetry --- */}
+        {/* --- 1.b Middle Row: Radial Gauge Sensor Telemetry --- */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 relative z-10">
-          <div className="bg-[#0f172a] rounded-xl p-5 border border-slate-800/80 shadow-sm flex items-center gap-4">
-            <div className="bg-cyan-950/60 border border-cyan-800/40 p-3 rounded-xl text-cyan-400">
-              <Activity className="w-5 h-5" />
-            </div>
-            <div>
-              <p className="text-xs text-slate-400 font-medium">Vibration Velocity</p>
-              <p className="text-xl font-bold text-white mt-0.5">
-                {machineData.vibration_velocity ? machineData.vibration_velocity.toFixed(2) : "0.00"} <span className="text-xs text-slate-400 font-normal">mm/s</span>
-              </p>
-            </div>
-          </div>
-
-          <div className="bg-[#0f172a] rounded-xl p-5 border border-slate-800/80 shadow-sm flex items-center gap-4">
-            <div className="bg-amber-950/60 border border-amber-800/40 p-3 rounded-xl text-amber-500">
-              <Thermometer className="w-5 h-5" />
-            </div>
-            <div>
-              <p className="text-xs text-slate-400 font-medium">Bearing Temperature</p>
-              <p className="text-xl font-bold text-white mt-0.5">
-                {machineData.bearing_temp ? machineData.bearing_temp.toFixed(1) : "0.0"} <span className="text-xs text-slate-400 font-normal">°C</span>
-              </p>
-            </div>
-          </div>
-
-          <div className="bg-[#0f172a] rounded-xl p-5 border border-slate-800/80 shadow-sm flex items-center gap-4">
-            <div className="bg-blue-950/60 border border-blue-800/40 p-3 rounded-xl text-blue-400">
-              <Gauge className="w-5 h-5" />
-            </div>
-            <div>
-              <p className="text-xs text-slate-400 font-medium">Inlet Pressure</p>
-              <p className="text-xl font-bold text-white mt-0.5">
-                {machineData.inlet_pressure ? machineData.inlet_pressure.toFixed(1) : "0.0"} <span className="text-xs text-slate-400 font-normal">PSI</span>
-              </p>
-            </div>
-          </div>
+          <SemiCircleGauge 
+            label="Vibration Velocity" 
+            value={machineData.vibration_velocity || 0} 
+            max={8} 
+            color="#06b6d4" 
+            unit="mm/s" 
+            icon={Activity} 
+          />
+          <SemiCircleGauge 
+            label="Bearing Temperature" 
+            value={machineData.bearing_temp || 0} 
+            max={120} 
+            color="#f59e0b" 
+            unit="°C" 
+            icon={Thermometer} 
+          />
+          <SemiCircleGauge 
+            label="Inlet Pressure" 
+            value={machineData.inlet_pressure || 0} 
+            max={100} 
+            color="#3b82f6" 
+            unit="PSI" 
+            icon={Gauge} 
+          />
         </div>
 
         {/* --- Bottom Row: Real-time Charts --- */}
@@ -325,10 +396,69 @@ const App = () => {
                   <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
                   <XAxis dataKey="time" stroke="#64748b" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
                   <YAxis stroke="#64748b" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} domain={[0, 'dataMax + 0.5']} />
+                  {/* 1.c Threshold Lines */}
+                  <ReferenceLine y={4.5} stroke="#f43f5e" strokeDasharray="3 3" label={{ position: 'insideTopLeft', value: 'Critical (4.5)', fill: '#f43f5e', fontSize: 10 }} />
+                  <ReferenceLine y={2.5} stroke="#f59e0b" strokeDasharray="3 3" label={{ position: 'insideTopLeft', value: 'Warning (2.5)', fill: '#f59e0b', fontSize: 10 }} />
+                  
                   <Line type="monotone" dataKey="vibration" stroke="#eab308" strokeWidth={2.5} dot={false} isAnimationActive={false} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
+          </div>
+        </div>
+
+        {/* --- 2.a & 2.c Alerts and Checklist Row --- */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 relative z-10">
+          
+          {/* Active Alert Log */}
+          <div className="bg-[#0f172a] rounded-xl p-6 border border-slate-800/80 shadow-md h-64 overflow-hidden flex flex-col">
+            <div className="flex items-center gap-2 mb-4">
+              <BellRing className="w-4 h-4 text-rose-400" />
+              <h2 className="text-sm font-semibold text-slate-200">Active Alert Log</h2>
+            </div>
+            <div className="overflow-y-auto space-y-2 pr-2 flex-1 scrollbar-thin scrollbar-thumb-slate-700">
+              {alerts.length === 0 ? (
+                <p className="text-sm text-slate-500 italic mt-4">No recent anomalies detected.</p>
+              ) : (
+                alerts.map((alert, idx) => (
+                  <div key={idx} className={`p-3 rounded-lg border text-xs flex gap-3 ${
+                    alert.level === 'red' ? 'bg-rose-500/10 border-rose-500/30 text-rose-300' : 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+                  }`}>
+                    <span className="font-mono text-[10px] opacity-70 mt-0.5 whitespace-nowrap">[{alert.time}]</span>
+                    <span>{alert.msg}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          {/* Maintenance Checklist (Conditional) */}
+          <div className="bg-[#0f172a] rounded-xl p-6 border border-slate-800/80 shadow-md h-64 overflow-hidden flex flex-col">
+            <div className="flex items-center gap-2 mb-4">
+              <CheckSquare className="w-4 h-4 text-emerald-400" />
+              <h2 className="text-sm font-semibold text-slate-200">Recommended Action Plan</h2>
+            </div>
+            {machineData.status === "OPERATIONAL" ? (
+              <div className="flex-1 flex items-center justify-center border-2 border-dashed border-slate-700 rounded-xl">
+                <p className="text-sm text-slate-500 text-center px-4">System is operating normally.<br/>No immediate maintenance required.</p>
+              </div>
+            ) : (
+              <div className="overflow-y-auto space-y-2 pr-2 flex-1">
+                {maintenanceTasks.map((task, idx) => (
+                  <label key={idx} className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                    checkedTasks[idx] ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300 line-through opacity-60' : 'bg-slate-800/50 border-slate-700 text-slate-300 hover:bg-slate-700/50'
+                  }`}>
+                    <input 
+                      type="checkbox" 
+                      className="mt-0.5 w-4 h-4 accent-emerald-500 bg-slate-900 border-slate-700 rounded"
+                      checked={!!checkedTasks[idx]}
+                      onChange={() => toggleTask(idx)}
+                    />
+                    <span className="text-sm">{task}</span>
+                  </label>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -342,7 +472,6 @@ const App = () => {
               <X className="w-5 h-5" />
             </button>
             <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2"><FileText className="w-5 h-5 text-cyan-400"/> Generate Report</h2>
-            
             <form onSubmit={handleGenerateReport} className="space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Target Equipment</label>
@@ -379,7 +508,6 @@ const App = () => {
               <X className="w-5 h-5" />
             </button>
             <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2"><Database className="w-5 h-5 text-cyan-400"/> Simulate Sensor Data</h2>
-            
             <form onSubmit={handleSimulateData} className="space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Test Model</label>
@@ -388,7 +516,6 @@ const App = () => {
                   <option value="compressor">Gas Compressor</option>
                 </select>
               </div>
-              
               <div className="grid grid-cols-3 gap-4">
                 <div>
                   <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Vibration</label>
@@ -403,31 +530,25 @@ const App = () => {
                   <input type="number" step="0.1" name="pressure" required placeholder="48.0" className="w-full bg-[#1e293b] border border-slate-700 text-white rounded-lg p-2.5 text-sm focus:outline-none focus:border-cyan-500" />
                 </div>
               </div>
-
               <div className="pt-2">
                 <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-lg transition-colors">
                   Run ML Prediction
                 </button>
               </div>
             </form>
-
-            {/* Display Simulation Results */}
             {simulationResult && (
               <div className="mt-6 p-4 bg-slate-800/50 border border-slate-700 rounded-xl">
                 <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Simulation Output</h3>
-                
                 <div className="flex justify-between items-center mb-3">
                   <span className="text-sm text-slate-300">Predicted RUL:</span>
                   <span className={`text-lg font-bold ${simulationResult.alert_level === 'green' ? 'text-emerald-400' : simulationResult.alert_level === 'yellow' ? 'text-amber-400' : 'text-rose-400'}`}>
                     {simulationResult.simulated_rul} hrs
                   </span>
                 </div>
-                
                 <div className="flex justify-between items-center mb-3">
                   <span className="text-sm text-slate-300">Est. Efficiency:</span>
                   <span className="text-lg font-bold text-cyan-400">{simulationResult.simulated_efficiency}%</span>
                 </div>
-
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-slate-300">System Status:</span>
                   <span className={`px-2 py-1 text-[10px] font-bold uppercase rounded border ${
@@ -443,6 +564,13 @@ const App = () => {
           </div>
         </div>
       )}
+
+      {/* Footer ML Data */}
+      <div className="max-w-7xl mx-auto mt-8 pb-8 text-center border-t border-slate-800/50 pt-4">
+        <p className="text-[10px] text-slate-500 font-mono">
+          Engine: Scikit-Learn | Architecture: Random Forest Regressor | Telemetry Rate: 5000ms
+        </p>
+      </div>
 
     </div>
   );
