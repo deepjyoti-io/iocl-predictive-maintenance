@@ -4,9 +4,11 @@ import { Activity, Thermometer, Gauge, AlertTriangle, Clock, ShieldCheck, AlertO
 import { jsPDF } from "jspdf";
 
 const App = () => {
-  const [equipment, setEquipment] = useState("pump"); // "pump" or "compressor"
+  const [equipment, setEquipment] = useState("pump"); 
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [isSimulateModalOpen, setIsSimulateModalOpen] = useState(false);
+  const [simulationResult, setSimulationResult] = useState(null);
   
   const [machineData, setMachineData] = useState({
     predicted_rul_hours: 0,
@@ -34,14 +36,11 @@ const App = () => {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Fetch Data Logic (Depends on selected equipment)
+  // Fetch Live Data Logic
   useEffect(() => {
-    // Clear history when switching equipment so charts don't look weird
     setHistory([]); 
-
     const fetchStatus = async () => {
       try {
-        // Dynamic fetch URL based on state
         const response = await fetch(`https://iocl-predictive-maintenance.onrender.com/api/${equipment}/status`);
         if (!response.ok) throw new Error("Network response was not ok");
         
@@ -58,7 +57,6 @@ const App = () => {
           const newHistory = [...prev, newPoint];
           return newHistory.slice(-20); 
         });
-
       } catch (err) {
         console.error("Backend offline:", err);
         setError("Cannot connect to backend server. Make sure server is running!");
@@ -68,7 +66,7 @@ const App = () => {
     fetchStatus();
     const interval = setInterval(fetchStatus, 5000);
     return () => clearInterval(interval);
-  }, [equipment]); // Re-run effect if equipment changes
+  }, [equipment]); 
 
   const getKpiTextColor = (status) => {
     if (status === "OPERATIONAL") return "text-emerald-400";
@@ -77,36 +75,27 @@ const App = () => {
   };
   const kpiColorClass = getKpiTextColor(machineData.status);
 
-  // UI Strings based on equipment
   const displayName = equipment === "pump" ? "Industrial Pump" : "Gas Compressor";
   const displayAsset = equipment === "pump" ? "CENTRIFUGAL_PUMP_01" : "RECIPROCATING_COMPRESSOR_01";
 
-  // Handle Report Form Submit (Generates and downloads PDF)
+  // Handle PDF Report Download
   const handleGenerateReport = (e) => {
     e.preventDefault();
-    
-    // Extract values from the form using the 'name' attributes
     const formData = new FormData(e.target);
     const selectedEquipment = formData.get("equipment") || equipment;
     const fromDate = formData.get("fromDate");
     const toDate = formData.get("toDate");
 
-    // Initialize PDF document
     const doc = new jsPDF();
-    
-    // Add Header
     doc.setFont("helvetica", "bold");
     doc.setFontSize(18);
     doc.text("IOCL Predictive Maintenance Report", 20, 20);
     
-    // Add Sub-header lines
     doc.setLineWidth(0.5);
     doc.line(20, 25, 190, 25);
     
-    // Add Data
     doc.setFontSize(12);
     doc.setFont("helvetica", "normal");
-    
     doc.text(`Report Generated : ${new Date().toLocaleString()}`, 20, 35);
     doc.text(`Equipment        : ${selectedEquipment === 'pump' ? 'CENTRIFUGAL PUMP 01' : 'GAS COMPRESSOR 01'}`, 20, 42);
     doc.text(`Date Range       : ${fromDate} to ${toDate}`, 20, 49);
@@ -125,11 +114,38 @@ const App = () => {
     doc.text(`Inlet Pressure         : ${machineData.inlet_pressure} PSI`, 20, 113);
     doc.text(`Suggested Servicing    : ${machineData.suggested_servicing_date}`, 20, 120);
 
-    // Save and trigger download
     doc.save(`${selectedEquipment}_Report_${fromDate}_to_${toDate}.pdf`);
-    
-    // Close modal
     setIsReportModalOpen(false);
+  };
+
+  // Handle Simulation Data Submit
+  const handleSimulateData = async (e) => {
+    e.preventDefault();
+    setSimulationResult(null); // reset previous result
+    
+    const formData = new FormData(e.target);
+    const targetEquipment = formData.get("equipment");
+    
+    const payload = {
+      vibration: parseFloat(formData.get("vibration")),
+      temperature: parseFloat(formData.get("temperature")),
+      pressure: parseFloat(formData.get("pressure"))
+    };
+
+    try {
+      const response = await fetch(`https://iocl-predictive-maintenance.onrender.com/api/${targetEquipment}/simulate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) throw new Error("Simulation request failed");
+      
+      const data = await response.json();
+      setSimulationResult(data);
+    } catch (err) {
+      console.error(err);
+      alert("Failed to reach simulation engine. Make sure server is running.");
+    }
   };
 
   return (
@@ -147,7 +163,6 @@ const App = () => {
           </div>
 
           <div className="flex items-center gap-4">
-            {/* Status Badge */}
             {machineData.status === "OPERATIONAL" && (
               <div className="px-4 py-2 rounded-lg border border-emerald-500/50 bg-emerald-500/20 text-emerald-400 text-xs font-bold uppercase tracking-wider flex items-center gap-2">
                 <ShieldCheck className="w-4 h-4 text-emerald-400" />
@@ -167,7 +182,6 @@ const App = () => {
               </div>
             )}
 
-            {/* Hamburger Menu Button */}
             <button 
               onClick={() => setIsMenuOpen(!isMenuOpen)} 
               className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700 transition-colors"
@@ -195,8 +209,8 @@ const App = () => {
                 <button onClick={() => { setIsReportModalOpen(true); setIsMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:bg-slate-700/50 rounded-lg flex items-center gap-2">
                   <FileText className="w-4 h-4" /> Generate Report
                 </button>
-                <button className="w-full text-left px-3 py-2 text-sm text-slate-500 rounded-lg flex items-center gap-2 cursor-not-allowed">
-                  <Database className="w-4 h-4" /> Simulate Data (Locked)
+                <button onClick={() => { setIsSimulateModalOpen(true); setIsMenuOpen(false); setSimulationResult(null); }} className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:bg-slate-700/50 rounded-lg flex items-center gap-2">
+                  <Database className="w-4 h-4 text-cyan-400" /> Simulate Data
                 </button>
               </div>
             </div>
@@ -327,7 +341,7 @@ const App = () => {
             <button onClick={() => setIsReportModalOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white">
               <X className="w-5 h-5" />
             </button>
-            <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2"><FileText className="w-5 h-5 text-cyan-400"/> Generate Equipment Report</h2>
+            <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2"><FileText className="w-5 h-5 text-cyan-400"/> Generate Report</h2>
             
             <form onSubmit={handleGenerateReport} className="space-y-4">
               <div>
@@ -353,6 +367,79 @@ const App = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* --- Simulate Data Modal --- */}
+      {isSimulateModalOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#0f172a] border border-slate-700 rounded-2xl w-full max-w-md p-6 shadow-2xl relative">
+            <button onClick={() => setIsSimulateModalOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white">
+              <X className="w-5 h-5" />
+            </button>
+            <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2"><Database className="w-5 h-5 text-cyan-400"/> Simulate Sensor Data</h2>
+            
+            <form onSubmit={handleSimulateData} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Test Model</label>
+                <select name="equipment" defaultValue={equipment} className="w-full bg-[#1e293b] border border-slate-700 text-white rounded-lg p-2.5 text-sm focus:outline-none focus:border-cyan-500">
+                  <option value="pump">Centrifugal Pump</option>
+                  <option value="compressor">Gas Compressor</option>
+                </select>
+              </div>
+              
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Vibration</label>
+                  <input type="number" step="0.01" name="vibration" required placeholder="1.0" className="w-full bg-[#1e293b] border border-slate-700 text-white rounded-lg p-2.5 text-sm focus:outline-none focus:border-cyan-500" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Temp °C</label>
+                  <input type="number" step="0.1" name="temperature" required placeholder="50.0" className="w-full bg-[#1e293b] border border-slate-700 text-white rounded-lg p-2.5 text-sm focus:outline-none focus:border-cyan-500" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Pressure PSI</label>
+                  <input type="number" step="0.1" name="pressure" required placeholder="48.0" className="w-full bg-[#1e293b] border border-slate-700 text-white rounded-lg p-2.5 text-sm focus:outline-none focus:border-cyan-500" />
+                </div>
+              </div>
+
+              <div className="pt-2">
+                <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-lg transition-colors">
+                  Run ML Prediction
+                </button>
+              </div>
+            </form>
+
+            {/* Display Simulation Results */}
+            {simulationResult && (
+              <div className="mt-6 p-4 bg-slate-800/50 border border-slate-700 rounded-xl">
+                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Simulation Output</h3>
+                
+                <div className="flex justify-between items-center mb-3">
+                  <span className="text-sm text-slate-300">Predicted RUL:</span>
+                  <span className={`text-lg font-bold ${simulationResult.alert_level === 'green' ? 'text-emerald-400' : simulationResult.alert_level === 'yellow' ? 'text-amber-400' : 'text-rose-400'}`}>
+                    {simulationResult.simulated_rul} hrs
+                  </span>
+                </div>
+                
+                <div className="flex justify-between items-center mb-3">
+                  <span className="text-sm text-slate-300">Est. Efficiency:</span>
+                  <span className="text-lg font-bold text-cyan-400">{simulationResult.simulated_efficiency}%</span>
+                </div>
+
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-slate-300">System Status:</span>
+                  <span className={`px-2 py-1 text-[10px] font-bold uppercase rounded border ${
+                    simulationResult.alert_level === 'green' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/50' :
+                    simulationResult.alert_level === 'yellow' ? 'bg-amber-500/20 text-amber-400 border-amber-500/50' :
+                    'bg-rose-500/20 text-rose-400 border-rose-500/50 animate-pulse'
+                  }`}>
+                    {simulationResult.status}
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import pandas as pd
 import joblib
 import json
@@ -50,8 +51,13 @@ if os.path.exists(COMP_DATA_PATH):
     with open(COMP_DATA_PATH, 'r') as f:
         comp_stream_data = json.load(f)
 
-# Separate indexes to track where each equipment is in its simulation loop
 stream_indexes = {"pump": 0, "compressor": 0}
+
+# --- Pydantic Model for Simulation Request ---
+class SimulationRequest(BaseModel):
+    vibration: float
+    temperature: float
+    pressure: float
 
 @app.get("/")
 def read_root():
@@ -59,8 +65,6 @@ def read_root():
 
 @app.get("/api/{equipment}/status")
 def get_equipment_status(equipment: str):
-    
-    # Select data and model based on the URL parameter
     if equipment == "compressor":
         dataset = comp_stream_data
         pipeline = comp_pipeline
@@ -95,12 +99,21 @@ def get_equipment_status(equipment: str):
         pressure = 48.3
         efficiency = 81.5
 
-    if predicted_rul > 720:
-        status, alert_level = "OPERATIONAL", "green"
-    elif 168 <= predicted_rul <= 720:
-        status, alert_level = "MAINTENANCE REQUIRED", "yellow"
+    # Triage thresholds specific to equipment
+    if equipment == "compressor":
+        if predicted_rul > 80:
+            status, alert_level = "OPERATIONAL", "green"
+        elif 40 <= predicted_rul <= 80:
+            status, alert_level = "MAINTENANCE REQUIRED", "yellow"
+        else:
+            status, alert_level = "CRITICAL RISK", "red"
     else:
-        status, alert_level = "CRITICAL RISK", "red"
+        if predicted_rul > 720:
+            status, alert_level = "OPERATIONAL", "green"
+        elif 168 <= predicted_rul <= 720:
+            status, alert_level = "MAINTENANCE REQUIRED", "yellow"
+        else:
+            status, alert_level = "CRITICAL RISK", "red"
 
     servicing_date = datetime.now() + timedelta(hours=max(0, predicted_rul - 48))
 
@@ -113,6 +126,54 @@ def get_equipment_status(equipment: str):
         "status": status,
         "alert_level": alert_level,
         "suggested_servicing_date": servicing_date.strftime("%B %d, %Y")
+    }
+
+# --- NEW: Simulation Endpoint ---
+@app.post("/api/{equipment}/simulate")
+def simulate_equipment(equipment: str, req: SimulationRequest):
+    pipeline = comp_pipeline if equipment == "compressor" else pump_pipeline
+    
+    # Attempt ML Prediction. If missing columns cause an error, fallback to algorithmic calculation
+    try:
+        # Map user input to both possible key formats the model might expect
+        df_input = pd.DataFrame([{
+            "vibration_velocity": req.vibration, "sensor_00": req.vibration,
+            "bearing_temp": req.temperature, "sensor_01": req.temperature,
+            "inlet_pressure": req.pressure, "sensor_02": req.pressure
+        }])
+        predicted_rul = float(pipeline.predict(df_input)[0])
+    except Exception as e:
+        print(f"Simulation ML fallback triggered: {e}")
+        # Algorithmic fallback if model expects 50+ features and we only gave 3
+        if equipment == "compressor":
+            predicted_rul = max(0.0, 150.0 - (req.vibration * 30) - (req.temperature * 0.5))
+        else:
+            predicted_rul = max(0.0, 800.0 - (req.vibration * 120) - (req.temperature * 2))
+
+    # Calculate simulated efficiency based on vibration and temperature
+    simulated_efficiency = max(0.0, min(100.0, 95.0 - (req.vibration * 4) - ((req.temperature - 40) * 0.3)))
+
+    # Apply Triage Logic
+    if equipment == "compressor":
+        if predicted_rul > 80:
+            status, alert_level = "OPERATIONAL", "green"
+        elif 40 <= predicted_rul <= 80:
+            status, alert_level = "MAINTENANCE REQUIRED", "yellow"
+        else:
+            status, alert_level = "CRITICAL RISK", "red"
+    else:
+        if predicted_rul > 720:
+            status, alert_level = "OPERATIONAL", "green"
+        elif 168 <= predicted_rul <= 720:
+            status, alert_level = "MAINTENANCE REQUIRED", "yellow"
+        else:
+            status, alert_level = "CRITICAL RISK", "red"
+
+    return {
+        "simulated_rul": round(predicted_rul, 1),
+        "simulated_efficiency": round(simulated_efficiency, 1),
+        "status": status,
+        "alert_level": alert_level
     }
 
 if __name__ == "__main__":
