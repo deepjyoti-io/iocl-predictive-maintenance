@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer } from 'recharts';
-import { Activity, Thermometer, Gauge, AlertTriangle, Clock } from 'lucide-react';
+import { Activity, Thermometer, Gauge, AlertTriangle, Clock, ShieldCheck } from 'lucide-react';
 
 const App = () => {
   const [pumpData, setPumpData] = useState({
@@ -13,6 +13,7 @@ const App = () => {
     bearing_temp: 46.0,
     inlet_pressure: 50.2,
     status: "Maintenance Required",
+    alert_level: "yellow",
     alert_message: "High vibration levels detected."
   });
   
@@ -43,7 +44,7 @@ const App = () => {
 
       } catch (err) {
         console.error("Backend offline:", err);
-        setError("Cannot connect to backend server. Make sure server.py is running on port 8000!");
+        setError("Cannot connect to backend server. Make sure server.py is running!");
       }
     };
 
@@ -52,16 +53,17 @@ const App = () => {
     return () => clearInterval(interval);
   }, []);
 
-  // --- Helpers for Status Styling ---
-  const getStatusBadge = (status) => {
-    switch (status) {
-      case "All Good":
+  // --- Dynamic Status Styling based on API alert_level ---
+  const getStatusBadge = (alertLevel) => {
+    switch (alertLevel) {
+      case "green":
         return "bg-emerald-500/10 border-emerald-500/30 text-emerald-400";
-      case "Warning":
-        return "bg-yellow-500/10 border-yellow-500/30 text-yellow-400";
-      case "Maintenance Required":
-      default:
+      case "yellow":
         return "bg-amber-500/10 border-amber-500/40 text-amber-400";
+      case "red":
+        return "bg-red-500/10 border-red-500/40 text-red-400";
+      default:
+        return "bg-slate-500/10 border-slate-500/40 text-slate-400";
     }
   };
 
@@ -80,8 +82,8 @@ const App = () => {
           </div>
 
           <div className="flex items-center gap-3">
-            <div className={`px-4 py-2 rounded-lg border text-xs font-semibold uppercase tracking-wider flex items-center gap-2 ${getStatusBadge(pumpData.status)}`}>
-              <AlertTriangle className="w-4 h-4" />
+            <div className={`px-4 py-2 rounded-lg border text-xs font-semibold uppercase tracking-wider flex items-center gap-2 ${getStatusBadge(pumpData.alert_level)}`}>
+              {pumpData.alert_level === "green" ? <ShieldCheck className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
               <span>{pumpData.status}</span>
             </div>
           </div>

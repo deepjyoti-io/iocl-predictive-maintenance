@@ -41,7 +41,6 @@ if os.path.exists(DATA_PATH):
 
 stream_index = 0
 
-
 @app.get("/")
 def read_root():
     return {
@@ -49,7 +48,6 @@ def read_root():
         "stream_samples_loaded": len(test_stream_data),
         "model_loaded": pipeline is not None
     }
-
 
 @app.get("/api/pump/status")
 def get_pump_status():
@@ -74,10 +72,11 @@ def get_pump_status():
         else:
             predicted_rul = float(row.get('predicted_rul_hours', row.get('rul', 338.3)))
 
-        # Extract telemetry parameters safely (supports sensor_XX keys as well as named keys)
+        # Extract telemetry parameters safely
         vibration = float(sensor_features.get('sensor_00', sensor_features.get('vibration_velocity', sensor_features.get('vibration', 1.01))))
         temperature = float(sensor_features.get('sensor_01', sensor_features.get('bearing_temp', sensor_features.get('temperature', 50.3))))
         pressure = float(sensor_features.get('sensor_02', sensor_features.get('inlet_pressure', sensor_features.get('pressure', 48.3))))
+        efficiency = float(sensor_features.get('efficiency', sensor_features.get('calculated_efficiency', 81.5)))
     
     else:
         # Fallback values if dataset is missing
@@ -85,6 +84,7 @@ def get_pump_status():
         vibration = 1.01
         temperature = 50.3
         pressure = 48.3
+        efficiency = 81.5
 
     # Safety Triage Logic
     if predicted_rul > 720:
@@ -97,16 +97,17 @@ def get_pump_status():
     # Servicing calculation
     servicing_date = datetime.now() + timedelta(hours=max(0, predicted_rul - 48))
 
+    # The keys here MUST match what React is expecting!
     return {
-        "vibration": round(vibration, 2),
-        "temperature": round(temperature, 1),
-        "pressure": round(pressure, 1),
+        "vibration_velocity": round(vibration, 2),
+        "bearing_temp": round(temperature, 1),
+        "inlet_pressure": round(pressure, 1),
+        "calculated_efficiency": round(efficiency, 1),
         "predicted_rul_hours": round(predicted_rul, 1),
         "status": status,
         "alert_level": alert_level,
         "suggested_servicing_date": servicing_date.strftime("%B %d, %Y")
     }
-
 
 if __name__ == "__main__":
     import uvicorn
