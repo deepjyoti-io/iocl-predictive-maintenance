@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, PieChart, Pie, Cell, ReferenceLine } from 'recharts';
-import { Activity, Thermometer, Gauge, AlertTriangle, Clock, ShieldCheck, AlertOctagon, Menu, X, FileText, Settings2, Database, Download, BellRing, CheckSquare, ArrowRight, ArrowLeft, LayoutDashboard, List } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, PieChart, Pie, Cell, ReferenceLine, AreaChart, Area, Tooltip as RechartsTooltip } from 'recharts';
+import { Activity, Thermometer, Gauge, AlertTriangle, Clock, ShieldCheck, AlertOctagon, Menu, X, FileText, Settings2, Database, Download, BellRing, CheckSquare, ArrowRight, ArrowLeft, LayoutDashboard, List, Maximize2, Calendar } from 'lucide-react';
 import { jsPDF } from "jspdf";
 
 // --- Custom Semi-Circle Gauge Component ---
@@ -68,22 +68,30 @@ const EQUIPMENT_SENSORS = {
 const App = () => {
   const [equipment, setEquipment] = useState("pump"); 
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
-  const [isShowAllOpen, setIsShowAllOpen] = useState(false);
-  const [isConfigOpen, setIsConfigOpen] = useState(false);
   
   // Custom Dashboard Layout States
   const [selectedGauges, setSelectedGauges] = useState(['vibration', 'temperature', 'pressure']);
   const [selectedGraph, setSelectedGraph] = useState('vibration');
 
-  // Simulation Modal States
+  // Modals
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [isShowAllOpen, setIsShowAllOpen] = useState(false);
+  const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [isSimulateModalOpen, setIsSimulateModalOpen] = useState(false);
+  
+  // Expanded Graph Modal
+  const [expandedGraph, setExpandedGraph] = useState(null); // 'rul' or sensor id
+  const [historicalMockData, setHistoricalMockData] = useState([]);
+
+  // Simulation
   const [selectedSimEquipment, setSelectedSimEquipment] = useState("pump");
   const [simulationStep, setSimulationStep] = useState(1);
   const [selectedSimSensors, setSelectedSimSensors] = useState([]);
   const [simulationResult, setSimulationResult] = useState(null);
   
-  // Alerts & Checklists
+  // Persistent Histories (Data won't clear on equipment switch)
+  const [histories, setHistories] = useState({ pump: [], compressor: [] });
+  
   const [alerts, setAlerts] = useState([]);
   const [checkedTasks, setCheckedTasks] = useState({});
   
@@ -95,7 +103,6 @@ const App = () => {
     alert_level: "green",
   });
   
-  const [history, setHistory] = useState([]);
   const [error, setError] = useState(null);
   const menuRef = useRef(null);
 
@@ -109,9 +116,9 @@ const App = () => {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Fetch Live Data Logic & Mock Extended Sensors
+  // Fetch Live Data
   useEffect(() => {
-    setHistory([]); 
+    // We strictly DO NOT clear histories here so it doesn't refresh
     setAlerts([]);
     setCheckedTasks({});
     setSelectedGauges(['vibration', 'temperature', 'pressure']);
@@ -126,7 +133,8 @@ const App = () => {
         setMachineData(data);
         setError(null);
 
-        setHistory(prev => {
+        setHistories(prev => {
+          const currentEquipHistory = prev[equipment] || [];
           const newPoint = { 
             time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), 
             rul: data.predicted_rul_hours, 
@@ -134,7 +142,6 @@ const App = () => {
             vibration: data.vibration_velocity,
             temperature: data.bearing_temp,
             pressure: data.inlet_pressure,
-            // Extended local sensor simulation
             flow_rate: equipment === 'pump' ? 120 + Math.random() * 2 - 1 : undefined,
             motor_current: equipment === 'pump' ? 25 + Math.random() * 0.5 - 0.25 : undefined,
             seal_oil_level: equipment === 'pump' ? 90 - Math.random() * 0.1 : undefined,
@@ -142,7 +149,8 @@ const App = () => {
             lube_box_level: equipment === 'compressor' ? 85 - Math.random() * 0.1 : undefined,
             rod_drop: equipment === 'compressor' ? 0.05 + Math.random() * 0.005 : undefined,
           };
-          return [...prev, newPoint].slice(-20); 
+          // Expanded array to 50 to prevent short refreshes
+          return { ...prev, [equipment]: [...currentEquipHistory, newPoint].slice(-50) };
         });
 
         if (data.status !== "OPERATIONAL") {
@@ -168,7 +176,9 @@ const App = () => {
     return () => clearInterval(interval);
   }, [equipment]); 
 
-  const currentData = history.length > 0 ? history[history.length - 1] : {};
+  // Helpers
+  const currentHistory = histories[equipment] || [];
+  const currentData = currentHistory.length > 0 ? currentHistory[currentHistory.length - 1] : {};
   const activeConfig = EQUIPMENT_SENSORS[equipment];
   const graphConfig = activeConfig.find(s => s.id === selectedGraph) || activeConfig[0];
 
@@ -192,21 +202,16 @@ const App = () => {
 
   const handleToggleGauge = (id) => {
     if (selectedGauges.includes(id)) {
-      if (selectedGauges.length > 1) {
-        setSelectedGauges(selectedGauges.filter(g => g !== id));
-      }
+      if (selectedGauges.length > 1) setSelectedGauges(selectedGauges.filter(g => g !== id));
     } else {
-      if (selectedGauges.length < 3) {
-        setSelectedGauges([...selectedGauges, id]);
-      }
+      if (selectedGauges.length < 3) setSelectedGauges([...selectedGauges, id]);
     }
   };
 
-  // --- Handlers for PDF, CSV, Simulation ---
   const handleExportCSV = () => {
-    if (history.length === 0) return alert("No telemetry data available to export yet.");
+    if (currentHistory.length === 0) return alert("No telemetry data available to export yet.");
     const headers = ["Timestamp", "RUL", "Efficiency", ...activeConfig.map(s => s.id)];
-    const rows = history.map(h => `${h.time},${h.rul},${h.efficiency},${activeConfig.map(s => h[s.id]).join(",")}`);
+    const rows = currentHistory.map(h => `${h.time},${h.rul},${h.efficiency},${activeConfig.map(s => h[s.id]).join(",")}`);
     const csvContent = [headers.join(","), ...rows].join("\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const link = document.createElement("a");
@@ -246,45 +251,38 @@ const App = () => {
     setIsReportModalOpen(false);
   };
 
-  const openSimulateModal = () => {
-    setSimulationStep(1);
-    setSelectedSimEquipment(equipment);
-    setSelectedSimSensors([]);
-    setSimulationResult(null);
-    setIsSimulateModalOpen(true);
-    setIsMenuOpen(false);
-  };
-
-  const handleSimSensorToggle = (id) => {
-    setSelectedSimSensors(prev => prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]);
-  };
-
-  const handleSimulateData = async (e) => {
+  // --- Historical Data Generator ---
+  const handleFetchHistory = (e) => {
     e.preventDefault();
-    setSimulationResult(null); 
     const formData = new FormData(e.target);
-    const availableSensors = EQUIPMENT_SENSORS[selectedSimEquipment];
+    const fromDate = new Date(formData.get("fromDate"));
+    const toDate = new Date(formData.get("toDate"));
     
-    // Core payload to ML Engine
-    const payload = {
-      vibration: selectedSimSensors.includes('vibration') ? parseFloat(formData.get("vibration")) : availableSensors.find(s => s.id === 'vibration').optimal,
-      temperature: selectedSimSensors.includes('temperature') ? parseFloat(formData.get("temperature")) : availableSensors.find(s => s.id === 'temperature').optimal,
-      pressure: selectedSimSensors.includes('pressure') ? parseFloat(formData.get("pressure")) : availableSensors.find(s => s.id === 'pressure').optimal
-    };
-
-    try {
-      const response = await fetch(`https://iocl-predictive-maintenance.onrender.com/api/${selectedSimEquipment}/simulate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+    const diffDays = Math.ceil(Math.abs(toDate - fromDate) / (1000 * 60 * 60 * 24));
+    const points = Math.min(diffDays + 1, 60); // Cap at 60 points for chart readability
+    
+    const data = [];
+    let val = expandedGraph === 'rul' ? (equipment === 'pump' ? 700 : 80) : activeConfig.find(s=>s.id === expandedGraph).optimal;
+    
+    for(let i=0; i<points; i++) {
+      let trend = expandedGraph === 'rul' ? -2.5 : (Math.random() * 0.4 - 0.2);
+      val = Math.max(0, val + trend + (Math.random() * 2 - 1));
+      
+      const pDate = new Date(fromDate);
+      pDate.setDate(pDate.getDate() + i);
+      
+      data.push({
+        date: pDate.toISOString().split('T')[0],
+        value: parseFloat(val.toFixed(2))
       });
-      if (!response.ok) throw new Error("Simulation request failed");
-      const data = await response.json();
-      setSimulationResult(data);
-    } catch (err) {
-      console.error(err);
-      alert("Failed to reach simulation engine. Make sure server is running.");
     }
+    setHistoricalMockData(data);
+  };
+
+  // Pre-load mock data when modal opens
+  const openExpandedGraph = (type) => {
+    setExpandedGraph(type);
+    setHistoricalMockData([]); // Reset until dates are picked
   };
 
   return (
@@ -354,19 +352,13 @@ const App = () => {
                 <button onClick={handleExportCSV} className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:bg-slate-700/50 rounded-lg flex items-center gap-2">
                   <Download className="w-4 h-4 text-blue-400" /> Export Live Audit (CSV)
                 </button>
-                <button onClick={openSimulateModal} className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:bg-slate-700/50 rounded-lg flex items-center gap-2">
+                <button onClick={() => { setIsSimulateModalOpen(true); setIsMenuOpen(false); setSimulationResult(null); }} className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:bg-slate-700/50 rounded-lg flex items-center gap-2">
                   <Database className="w-4 h-4 text-cyan-400" /> Simulate Sensor Data
                 </button>
               </div>
             </div>
           )}
         </header>
-
-        {error && (
-          <div className="bg-red-950/40 border border-red-800/60 text-red-300 p-4 rounded-xl text-sm font-mono">
-            ⚠️ CONNECTION ERROR: {error}
-          </div>
-        )}
 
         {/* --- Top Row: Key Performance Indicators --- */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 relative z-10">
@@ -417,16 +409,23 @@ const App = () => {
           })}
         </div>
 
-        {/* --- Bottom Row: Real-time Charts --- */}
+        {/* --- Bottom Row: Real-time Interactive Charts --- */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 relative z-10">
-          <div className="bg-[#0f172a] rounded-xl p-6 border border-slate-800/80 shadow-md">
+          
+          <div 
+            onClick={() => openExpandedGraph('rul')}
+            className="bg-[#0f172a] rounded-xl p-6 border border-slate-800/80 shadow-md cursor-pointer group hover:border-cyan-500/50 transition-colors relative"
+          >
+            <div className="absolute top-6 right-6 opacity-0 group-hover:opacity-100 transition-opacity">
+              <Maximize2 className="w-5 h-5 text-slate-400" />
+            </div>
             <div className="flex items-center gap-2 mb-6">
               <Clock className="w-4 h-4 text-cyan-400" />
               <h2 className="text-sm font-semibold text-slate-200">RUL Degradation Trend</h2>
             </div>
             <div className="h-60">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={history} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
+                <LineChart data={currentHistory} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
                   <XAxis dataKey="time" stroke="#64748b" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
                   <YAxis stroke="#64748b" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} domain={['dataMin - 10', 'dataMax + 10']} />
@@ -436,14 +435,20 @@ const App = () => {
             </div>
           </div>
 
-          <div className="bg-[#0f172a] rounded-xl p-6 border border-slate-800/80 shadow-md">
+          <div 
+            onClick={() => openExpandedGraph(selectedGraph)}
+            className="bg-[#0f172a] rounded-xl p-6 border border-slate-800/80 shadow-md cursor-pointer group hover:border-amber-500/50 transition-colors relative"
+          >
+            <div className="absolute top-6 right-6 opacity-0 group-hover:opacity-100 transition-opacity">
+              <Maximize2 className="w-5 h-5 text-slate-400" />
+            </div>
             <div className="flex items-center gap-2 mb-6">
               <graphConfig.icon className="w-4 h-4" style={{ color: graphConfig.color }} />
               <h2 className="text-sm font-semibold text-slate-200">Live {graphConfig.label} Trend</h2>
             </div>
             <div className="h-60">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={history} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
+                <LineChart data={currentHistory} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
                   <XAxis dataKey="time" stroke="#64748b" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
                   <YAxis stroke="#64748b" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} domain={[0, 'dataMax + 5']} />
@@ -578,6 +583,72 @@ const App = () => {
             <button onClick={() => setIsConfigOpen(false)} className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3 rounded-none transition-colors uppercase text-xs tracking-widest">
               Apply Layout
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* --- Expanded Historical Graph Modal --- */}
+      {expandedGraph && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#0f172a] border border-slate-700 rounded-2xl w-full max-w-5xl h-[80vh] p-6 shadow-2xl relative flex flex-col">
+            <button onClick={() => setExpandedGraph(null)} className="absolute top-4 right-4 text-slate-400 hover:text-white">
+              <X className="w-6 h-6" />
+            </button>
+            
+            <h2 className="text-xl font-bold text-white mb-6 uppercase tracking-widest border-b border-slate-700 pb-4 flex items-center gap-3">
+              <Calendar className="w-6 h-6 text-cyan-400"/> 
+              Historical Trend Analyzer: {expandedGraph === 'rul' ? 'Predicted RUL' : activeConfig.find(s=>s.id === expandedGraph)?.fullLabel}
+            </h2>
+            
+            <form onSubmit={handleFetchHistory} className="flex items-end gap-4 mb-6 bg-slate-800/50 p-4 rounded-xl border border-slate-700">
+              <div className="flex-1">
+                <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">From Date</label>
+                <input type="date" name="fromDate" required defaultValue="2026-06-01" className="w-full bg-[#1e293b] border border-slate-700 text-white rounded-lg p-2.5 text-sm focus:outline-none focus:border-cyan-500" />
+              </div>
+              <div className="flex-1">
+                <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">To Date (Present)</label>
+                <input type="date" name="toDate" required defaultValue="2026-07-28" className="w-full bg-[#1e293b] border border-slate-700 text-white rounded-lg p-2.5 text-sm focus:outline-none focus:border-cyan-500" />
+              </div>
+              <button type="submit" className="bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2.5 px-6 rounded-lg transition-colors uppercase text-xs tracking-widest">
+                Fetch Data
+              </button>
+            </form>
+
+            <div className="flex-1 min-h-0 bg-[#070b14] rounded-xl border border-slate-800 p-4">
+              {historicalMockData.length === 0 ? (
+                <div className="w-full h-full flex items-center justify-center text-slate-500 flex-col gap-2">
+                  <Database className="w-8 h-8 opacity-50" />
+                  <p>Select dates and click Fetch Data to generate historical trend.</p>
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={historicalMockData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={expandedGraph === 'rul' ? '#06b6d4' : (activeConfig.find(s=>s.id === expandedGraph)?.color || '#06b6d4')} stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor={expandedGraph === 'rul' ? '#06b6d4' : (activeConfig.find(s=>s.id === expandedGraph)?.color || '#06b6d4')} stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                    <XAxis dataKey="date" stroke="#64748b" tick={{ fontSize: 12 }} tickLine={false} axisLine={false} minTickGap={30} />
+                    <YAxis stroke="#64748b" tick={{ fontSize: 12 }} tickLine={false} axisLine={false} domain={['auto', 'auto']} />
+                    <RechartsTooltip 
+                      contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f8fafc' }}
+                      itemStyle={{ color: expandedGraph === 'rul' ? '#06b6d4' : (activeConfig.find(s=>s.id === expandedGraph)?.color || '#06b6d4') }}
+                    />
+                    <Area 
+                      type="monotone" 
+                      dataKey="value" 
+                      name={expandedGraph === 'rul' ? 'RUL (hrs)' : activeConfig.find(s=>s.id === expandedGraph)?.unit}
+                      stroke={expandedGraph === 'rul' ? '#06b6d4' : (activeConfig.find(s=>s.id === expandedGraph)?.color || '#06b6d4')} 
+                      fillOpacity={1} 
+                      fill="url(#colorValue)" 
+                      strokeWidth={3} 
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              )}
+            </div>
           </div>
         </div>
       )}
