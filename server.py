@@ -95,17 +95,26 @@ def get_equipment_status(equipment: str):
 
         if equipment == "compressor":
             vibration = float(sensor_features.get('gaccx', sensor_features.get('vibration', 1.2)))
-            temperature = float(sensor_features.get('outlet_temp', sensor_features.get('temperature', 85.0)))
+            temperature = float(sensor_features.get('outlet_temp', sensor_features.get('temperature', 150.0)))
             pressure = float(sensor_features.get('wpump_outlet_press', sensor_features.get('pressure', 140.0)))
+            
+            # Compressor efficiency formula (normal operating temp is ~140-170 °C)
+            raw_eff = 95.0 - (vibration * 4.0) - ((temperature - 140.0) * 0.3)
+            efficiency = max(0.0, min(100.0, raw_eff))
+            
+            # Catastrophic safety check tuned for Gas Compressor (>190 °C trip limit)
+            is_catastrophic = (vibration > 4.5) or (temperature > 190.0) or (efficiency <= 10.0)
         else:
             vibration = float(sensor_features.get('sensor_00', sensor_features.get('vibration', 1.0)))
             temperature = float(sensor_features.get('sensor_01', sensor_features.get('temperature', 45.0)))
             pressure = float(sensor_features.get('sensor_02', sensor_features.get('pressure', 50.0)))
-        
-        raw_eff = 95.0 - (vibration * 4.0) - ((temperature - 40.0) * 0.3)
-        efficiency = max(0.0, min(100.0, raw_eff))
-
-        is_catastrophic = (vibration > 4.5) or (temperature > 90.0) or (efficiency <= 10.0)
+            
+            # Pump efficiency formula (normal operating temp is ~40-60 °C)
+            raw_eff = 95.0 - (vibration * 4.0) - ((temperature - 40.0) * 0.3)
+            efficiency = max(0.0, min(100.0, raw_eff))
+            
+            # Catastrophic safety check tuned for Centrifugal Pump (>90 °C trip limit)
+            is_catastrophic = (vibration > 4.5) or (temperature > 90.0) or (efficiency <= 10.0)
 
         if is_catastrophic:
             predicted_rul = 0.0
@@ -159,20 +168,20 @@ def simulate_equipment(equipment: str, req: SimulationRequest):
         dataset = comp_stream_data
         
         vib_val = req.vibration if req.vibration is not None else 1.2
-        temp_val = req.temperature if req.temperature is not None else 85.0
+        temp_val = req.temperature if req.temperature is not None else 150.0
         press_val = req.pressure if req.pressure is not None else 140.0
         cross_temp = req.crosshead_temp if req.crosshead_temp is not None else 65.0
         lube_box = req.lube_box_level if req.lube_box_level is not None else 85.0
         rod_drop = req.rod_drop if req.rod_drop is not None else 0.05
 
         # Thermodynamic efficiency impacted by all 6 compressor sensors
-        eff_penalty = (vib_val * 4.0) + ((temp_val - 40.0) * 0.2) + ((cross_temp - 50.0) * 0.3) + ((100.0 - lube_box) * 0.2) + (rod_drop * 100.0)
+        eff_penalty = (vib_val * 4.0) + ((temp_val - 140.0) * 0.2) + ((cross_temp - 50.0) * 0.3) + ((100.0 - lube_box) * 0.2) + (rod_drop * 100.0)
         simulated_efficiency = max(0.0, min(100.0, 95.0 - eff_penalty))
 
-        # Extreme catastrophic trip check across all 6 inputs
+        # Extreme catastrophic trip check across all 6 inputs (Compressor temp limit >190 °C)
         is_catastrophic = (
             vib_val > 4.5 or 
-            temp_val > 120.0 or 
+            temp_val > 190.0 or 
             cross_temp > 95.0 or 
             lube_box < 20.0 or 
             rod_drop > 0.15 or 
@@ -193,7 +202,7 @@ def simulate_equipment(equipment: str, req: SimulationRequest):
         eff_penalty = (vib_val * 4.0) + ((temp_val - 40.0) * 0.3) + (abs(flow_rate - 120.0) * 0.2) + ((motor_curr - 25.0) * 0.5) + ((100.0 - seal_oil) * 0.2)
         simulated_efficiency = max(0.0, min(100.0, 95.0 - eff_penalty))
 
-        # Extreme catastrophic trip check across all 6 inputs
+        # Extreme catastrophic trip check across all 6 inputs (Pump temp limit >90 °C)
         is_catastrophic = (
             vib_val > 4.5 or 
             temp_val > 90.0 or 
@@ -221,13 +230,10 @@ def simulate_equipment(equipment: str, req: SimulationRequest):
                 elif col == 'wpump_outlet_press' or 'press' in col:
                     baseline_features[col] = press_val
                 elif col == 'motor_power':
-                    # Scale crosshead temp variation into motor power load
                     baseline_features[col] = baseline_features[col] * (cross_temp / 65.0)
                 elif col == 'oilpump_power':
-                    # Map lube box level variation to oil pump power
                     baseline_features[col] = baseline_features[col] * (100.0 / max(1.0, lube_box))
                 elif col == 'air_flow':
-                    # Map rod drop mechanical wear to air flow restriction
                     baseline_features[col] = baseline_features[col] * (1.0 - (rod_drop * 2.0))
         else:
             for col in baseline_features.keys():
