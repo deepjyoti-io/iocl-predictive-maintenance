@@ -60,7 +60,7 @@ if os.path.exists(COMP_DATA_PATH):
 
 stream_indexes = {"pump": 0, "compressor": 0}
 
-# --- Flexible Pydantic Model ---
+# --- Pydantic Model for Simulation Request ---
 class SimulationRequest(BaseModel):
     vibration: Optional[float] = 1.0
     temperature: Optional[float] = 50.0
@@ -76,6 +76,7 @@ class SimulationRequest(BaseModel):
 def read_root():
     return {"status": "IOCL Multi-Equipment Telemetry API is Live!"}
 
+# --- Live Equipment Telemetry Stream Endpoint ---
 @app.get("/api/{equipment}/status")
 def get_equipment_status(equipment: str):
     if equipment == "compressor":
@@ -92,40 +93,50 @@ def get_equipment_status(equipment: str):
 
         sensor_features = {k: v for k, v in row.items() if k not in ['actual_rul', 'predicted_rul_hours', 'rul']}
 
-        if pipeline is not None:
-            try:
-                df_input = pd.DataFrame([sensor_features])
-                predicted_rul = float(pipeline.predict(df_input)[0])
-            except Exception:
-                predicted_rul = float(row.get('predicted_rul_hours', row.get('rul', 338.3)))
-        else:
-            predicted_rul = float(row.get('predicted_rul_hours', row.get('rul', 338.3)))
-
+        # Extract Core Telemetry
         vibration = float(sensor_features.get('sensor_00', sensor_features.get('vibration_velocity', sensor_features.get('vibration', 1.01))))
         temperature = float(sensor_features.get('sensor_01', sensor_features.get('bearing_temp', sensor_features.get('temperature', 50.3))))
         pressure = float(sensor_features.get('sensor_02', sensor_features.get('inlet_pressure', sensor_features.get('pressure', 48.3))))
-        efficiency = float(sensor_features.get('efficiency', sensor_features.get('calculated_efficiency', 81.5)))
-    else:
-        predicted_rul = 338.3
-        vibration = 1.01
-        temperature = 50.3
-        pressure = 48.3
-        efficiency = 81.5
+        
+        # Calculate Real Thermodynamic Efficiency
+        raw_eff = 95.0 - (vibration * 4.0) - ((temperature - 40.0) * 0.3)
+        efficiency = max(0.0, min(100.0, raw_eff))
 
-    if equipment == "compressor":
-        if predicted_rul > 80:
-            status, alert_level = "OPERATIONAL", "green"
-        elif 40 <= predicted_rul <= 80:
-            status, alert_level = "MAINTENANCE REQUIRED", "yellow"
-        else:
+        # Check for Extreme Physical Breach
+        is_catastrophic = (vibration > 4.5) or (temperature > 90.0) or (efficiency <= 10.0)
+
+        if is_catastrophic:
+            predicted_rul = 0.0
             status, alert_level = "CRITICAL RISK", "red"
+        else:
+            if pipeline is not None:
+                try:
+                    df_input = pd.DataFrame([sensor_features])
+                    predicted_rul = float(pipeline.predict(df_input)[0])
+                except Exception:
+                    predicted_rul = float(row.get('predicted_rul_hours', row.get('rul', 338.3)))
+            else:
+                predicted_rul = float(row.get('predicted_rul_hours', row.get('rul', 338.3)))
+
+            # Triage Logic
+            if equipment == "compressor":
+                if predicted_rul > 80:
+                    status, alert_level = "OPERATIONAL", "green"
+                elif 40 <= predicted_rul <= 80:
+                    status, alert_level = "MAINTENANCE REQUIRED", "yellow"
+                else:
+                    status, alert_level = "CRITICAL RISK", "red"
+            else:
+                if predicted_rul > 720:
+                    status, alert_level = "OPERATIONAL", "green"
+                elif 168 <= predicted_rul <= 720:
+                    status, alert_level = "MAINTENANCE REQUIRED", "yellow"
+                else:
+                    status, alert_level = "CRITICAL RISK", "red"
+
     else:
-        if predicted_rul > 720:
-            status, alert_level = "OPERATIONAL", "green"
-        elif 168 <= predicted_rul <= 720:
-            status, alert_level = "MAINTENANCE REQUIRED", "yellow"
-        else:
-            status, alert_level = "CRITICAL RISK", "red"
+        vibration, temperature, pressure, efficiency, predicted_rul = 1.01, 50.3, 48.3, 81.5, 338.3
+        status, alert_level = "OPERATIONAL", "green"
 
     servicing_date = datetime.now() + timedelta(hours=max(0, predicted_rul - 48))
 
@@ -140,6 +151,7 @@ def get_equipment_status(equipment: str):
         "suggested_servicing_date": servicing_date.strftime("%B %d, %Y")
     }
 
+# --- Simulation Endpoint ---
 @app.post("/api/{equipment}/simulate")
 def simulate_equipment(equipment: str, req: SimulationRequest):
     if equipment == "compressor":
@@ -149,53 +161,66 @@ def simulate_equipment(equipment: str, req: SimulationRequest):
         pipeline = pump_pipeline
         dataset = pump_stream_data
 
-    baseline_features = {}
-    if dataset:
-        baseline_features = {k: v for k, v in dataset[0].items() if k not in ['actual_rul', 'predicted_rul_hours', 'rul']}
-
     vib_val = req.vibration if req.vibration is not None else 1.0
     temp_val = req.temperature if req.temperature is not None else 50.0
     press_val = req.pressure if req.pressure is not None else 48.0
 
-    # Overlay user values onto baseline dataset
-    for col in baseline_features.keys():
-        if 'vib' in col or 'sensor_00' in col:
-            baseline_features[col] = vib_val
-        elif 'temp' in col or 'sensor_01' in col:
-            baseline_features[col] = temp_val
-        elif 'press' in col or 'sensor_02' in col:
-            baseline_features[col] = press_val
+    # 1. Calculate Real Thermodynamic Efficiency
+    raw_efficiency = 95.0 - (vib_val * 4.0) - ((temp_val - 40.0) * 0.3)
+    simulated_efficiency = max(0.0, min(100.0, raw_efficiency))
 
-    predicted_rul = None
-    if pipeline is not None and len(baseline_features) > 0:
-        try:
-            df_input = pd.DataFrame([baseline_features])
-            predicted_rul = float(pipeline.predict(df_input)[0])
-        except Exception as e:
-            print(f"Simulation ML prediction error: {e}")
+    # 2. CATASTROPHIC OVERRIDE CHECK
+    is_catastrophic = (vib_val > 4.5) or (temp_val > 90.0) or (simulated_efficiency <= 10.0)
 
-    if predicted_rul is None:
-        if equipment == "compressor":
-            predicted_rul = max(0.0, 150.0 - (vib_val * 30) - (temp_val * 0.5))
-        else:
-            predicted_rul = max(0.0, 800.0 - (vib_val * 120) - (temp_val * 2))
-
-    simulated_efficiency = max(0.0, min(100.0, 95.0 - (vib_val * 4) - ((temp_val - 40) * 0.3)))
-
-    if equipment == "compressor":
-        if predicted_rul > 80:
-            status, alert_level = "OPERATIONAL", "green"
-        elif 40 <= predicted_rul <= 80:
-            status, alert_level = "MAINTENANCE REQUIRED", "yellow"
-        else:
-            status, alert_level = "CRITICAL RISK", "red"
+    if is_catastrophic:
+        predicted_rul = 0.0
+        status = "CRITICAL RISK"
+        alert_level = "red"
     else:
-        if predicted_rul > 720:
-            status, alert_level = "OPERATIONAL", "green"
-        elif 168 <= predicted_rul <= 720:
-            status, alert_level = "MAINTENANCE REQUIRED", "yellow"
+        # Build baseline feature input for ML Pipeline
+        baseline_features = {}
+        if dataset:
+            baseline_features = {k: v for k, v in dataset[0].items() if k not in ['actual_rul', 'predicted_rul_hours', 'rul']}
+
+        for col in baseline_features.keys():
+            if 'vib' in col or 'sensor_00' in col:
+                baseline_features[col] = vib_val
+            elif 'temp' in col or 'sensor_01' in col:
+                baseline_features[col] = temp_val
+            elif 'press' in col or 'sensor_02' in col:
+                baseline_features[col] = press_val
+
+        # Attempt ML Model Prediction
+        predicted_rul = None
+        if pipeline is not None and len(baseline_features) > 0:
+            try:
+                df_input = pd.DataFrame([baseline_features])
+                predicted_rul = float(pipeline.predict(df_input)[0])
+            except Exception as e:
+                print(f"Simulation ML prediction error: {e}")
+
+        # Fallback calculation if ML model fails
+        if predicted_rul is None:
+            if equipment == "compressor":
+                predicted_rul = max(0.0, 150.0 - (vib_val * 25.0) - (temp_val * 0.8))
+            else:
+                predicted_rul = max(0.0, 800.0 - (vib_val * 100.0) - (temp_val * 5.0))
+
+        # Apply Standard Triage Thresholds
+        if equipment == "compressor":
+            if predicted_rul > 80:
+                status, alert_level = "OPERATIONAL", "green"
+            elif 40 <= predicted_rul <= 80:
+                status, alert_level = "MAINTENANCE REQUIRED", "yellow"
+            else:
+                status, alert_level = "CRITICAL RISK", "red"
         else:
-            status, alert_level = "CRITICAL RISK", "red"
+            if predicted_rul > 720:
+                status, alert_level = "OPERATIONAL", "green"
+            elif 168 <= predicted_rul <= 720:
+                status, alert_level = "MAINTENANCE REQUIRED", "yellow"
+            else:
+                status, alert_level = "CRITICAL RISK", "red"
 
     return {
         "simulated_rul": round(predicted_rul, 1),
