@@ -729,12 +729,7 @@ const App = () => {
         </div>
       )}
 
-      {/* Footer ML Data */}
-      <div className="max-w-7xl mx-auto mt-8 pb-8 text-center border-t border-slate-800/50 pt-4">
-        <p className="text-[10px] text-slate-500 font-mono">
-          Engine: Scikit-Learn | Architecture: Random Forest Regressor | Telemetry Rate: 5000ms
-        </p>
-      </div>
+
 
     </div>
   );
