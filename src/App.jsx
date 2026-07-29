@@ -294,10 +294,21 @@ const App = () => {
     const formData = new FormData(e.target);
     const availableSensors = EQUIPMENT_SENSORS[selectedSimEquipment];
     
+    // Construct payload containing ALL 6 potential sensor inputs
     const payload = {
       vibration: selectedSimSensors.includes('vibration') ? parseFloat(formData.get("vibration")) : availableSensors.find(s => s.id === 'vibration').optimal,
       temperature: selectedSimSensors.includes('temperature') ? parseFloat(formData.get("temperature")) : availableSensors.find(s => s.id === 'temperature').optimal,
-      pressure: selectedSimSensors.includes('pressure') ? parseFloat(formData.get("pressure")) : availableSensors.find(s => s.id === 'pressure').optimal
+      pressure: selectedSimSensors.includes('pressure') ? parseFloat(formData.get("pressure")) : availableSensors.find(s => s.id === 'pressure').optimal,
+      
+      // Compressor Specifics
+      crosshead_temp: selectedSimSensors.includes('crosshead_temp') ? parseFloat(formData.get("crosshead_temp")) : (availableSensors.find(s => s.id === 'crosshead_temp')?.optimal || 65.0),
+      lube_box_level: selectedSimSensors.includes('lube_box_level') ? parseFloat(formData.get("lube_box_level")) : (availableSensors.find(s => s.id === 'lube_box_level')?.optimal || 85.0),
+      rod_drop: selectedSimSensors.includes('rod_drop') ? parseFloat(formData.get("rod_drop")) : (availableSensors.find(s => s.id === 'rod_drop')?.optimal || 0.05),
+
+      // Pump Specifics
+      flow_rate: selectedSimSensors.includes('flow_rate') ? parseFloat(formData.get("flow_rate")) : (availableSensors.find(s => s.id === 'flow_rate')?.optimal || 120.0),
+      motor_current: selectedSimSensors.includes('motor_current') ? parseFloat(formData.get("motor_current")) : (availableSensors.find(s => s.id === 'motor_current')?.optimal || 25.0),
+      seal_oil_level: selectedSimSensors.includes('seal_oil_level') ? parseFloat(formData.get("seal_oil_level")) : (availableSensors.find(s => s.id === 'seal_oil_level')?.optimal || 90.0)
     };
 
     try {
@@ -728,8 +739,6 @@ const App = () => {
           </div>
         </div>
       )}
-
-
 
     </div>
   );
