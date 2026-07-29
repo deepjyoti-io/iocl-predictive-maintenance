@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, PieChart, Pie, Cell, ReferenceLine, AreaChart, Area, Tooltip as RechartsTooltip } from 'recharts';
-import { Activity, Thermometer, Gauge, AlertTriangle, Clock, ShieldCheck, AlertOctagon, Menu, X, FileText, Settings2, Database, Download, BellRing, CheckSquare, ArrowRight, ArrowLeft, LayoutDashboard, List, Maximize2, Calendar } from 'lucide-react';
+import { Activity, Thermometer, Gauge, AlertTriangle, Clock, ShieldCheck, AlertOctagon, Menu, X, FileText, Settings2, Database, List, Maximize2, Calendar, ArrowRight, ArrowLeft } from 'lucide-react';
 import { jsPDF } from "jspdf";
 
 // --- Custom Semi-Circle Gauge Component ---
@@ -71,17 +71,16 @@ const App = () => {
   const [equipment, setEquipment] = useState("pump"); 
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   
-  // Custom Dashboard Layout States
-  const [selectedGauges, setSelectedGauges] = useState(['vibration', 'temperature', 'pressure']);
-  const [selectedGraph, setSelectedGraph] = useState('vibration');
+  // Primary Gauges & Main Graph Selection
+  const [selectedGauges] = useState(['vibration', 'temperature', 'pressure']);
+  const [selectedGraph] = useState('vibration');
 
   // Modals
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [isShowAllOpen, setIsShowAllOpen] = useState(false);
-  const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [isSimulateModalOpen, setIsSimulateModalOpen] = useState(false);
   
-  // Expanded Graph Modal
+  // Expanded Historical Graph Modal
   const [expandedGraph, setExpandedGraph] = useState(null);
   const [historicalMockData, setHistoricalMockData] = useState([]);
 
@@ -91,10 +90,9 @@ const App = () => {
   const [selectedSimSensors, setSelectedSimSensors] = useState([]);
   const [simulationResult, setSimulationResult] = useState(null);
   
-  // Persistent Histories across equipment toggle
+  // Persistent Histories
   const [histories, setHistories] = useState({ pump: [], compressor: [] });
   const [alerts, setAlerts] = useState([]);
-  const [checkedTasks, setCheckedTasks] = useState({});
   
   const [machineData, setMachineData] = useState({
     predicted_rul_hours: 0,
@@ -117,12 +115,9 @@ const App = () => {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Fetch Live Telemetry Data
+  // Fetch Live Telemetry
   useEffect(() => {
     setAlerts([]);
-    setCheckedTasks({});
-    setSelectedGauges(['vibration', 'temperature', 'pressure']);
-    setSelectedGraph('vibration');
 
     const fetchStatus = async () => {
       try {
@@ -191,68 +186,100 @@ const App = () => {
   const displayName = equipment === "pump" ? "Industrial Pump" : "Gas Compressor";
   const displayAsset = equipment === "pump" ? "CENTRIFUGAL_PUMP_01" : "RECIPROCATING_COMPRESSOR_01";
 
-  const maintenanceTasks = equipment === "pump" 
-    ? ["Check coupling alignment", "Replace mechanical seals", "Inspect bearing lubrication oil", "Verify suction strainer"]
-    : ["Inspect suction/discharge valves", "Check cylinder lube rate", "Monitor intercooler pressure", "Drain knockout drums"];
-
-  const toggleTask = (idx) => {
-    setCheckedTasks(prev => ({ ...prev, [idx]: !prev[idx] }));
-  };
-
-  const handleToggleGauge = (id) => {
-    if (selectedGauges.includes(id)) {
-      if (selectedGauges.length > 1) setSelectedGauges(selectedGauges.filter(g => g !== id));
-    } else {
-      if (selectedGauges.length < 3) setSelectedGauges([...selectedGauges, id]);
-    }
-  };
-
   const handleSimSensorToggle = (id) => {
     setSelectedSimSensors(prev => 
       prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
     );
   };
 
-  const handleExportCSV = () => {
-    if (currentHistory.length === 0) return alert("No telemetry data available to export yet.");
-    const headers = ["Timestamp", "RUL", "Efficiency", ...activeConfig.map(s => s.id)];
-    const rows = currentHistory.map(h => `${h.time},${h.rul},${h.efficiency},${activeConfig.map(s => h[s.id]).join(",")}`);
-    const csvContent = [headers.join(","), ...rows].join("\n");
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = `${equipment}_live_audit_log_${new Date().getTime()}.csv`;
-    link.click();
-    setIsMenuOpen(false);
-  };
-
+  // Detailed Report Generator with Sensor Telemetry & Alerts
   const handleGenerateReport = (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
-    const selectedEquipment = formData.get("equipment") || equipment;
+    const selectedEquip = formData.get("equipment") || equipment;
     const fromDate = formData.get("fromDate");
+    const fromTime = formData.get("fromTime") || "00:00";
     const toDate = formData.get("toDate");
+    const toTime = formData.get("toTime") || "23:59";
+
+    const targetConfig = EQUIPMENT_SENSORS[selectedEquip];
+    const equipTitle = selectedEquip === 'pump' ? 'CENTRIFUGAL PUMP 01' : 'GAS COMPRESSOR 01';
 
     const doc = new jsPDF();
+    
+    // Header
     doc.setFont("helvetica", "bold");
     doc.setFontSize(18);
     doc.text("IOCL Predictive Maintenance Report", 20, 20);
     doc.setLineWidth(0.5);
-    doc.line(20, 25, 190, 25);
-    doc.setFontSize(12);
+    doc.line(20, 24, 190, 24);
+
+    // Context Information
+    doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
-    doc.text(`Report Generated : ${new Date().toLocaleString()}`, 20, 35);
-    doc.text(`Equipment        : ${selectedEquipment === 'pump' ? 'CENTRIFUGAL PUMP 01' : 'GAS COMPRESSOR 01'}`, 20, 42);
-    doc.text(`Date Range       : ${fromDate} to ${toDate}`, 20, 49);
+    doc.text(`Generated On : ${new Date().toLocaleString()}`, 20, 32);
+    doc.text(`Target Asset : ${equipTitle}`, 20, 38);
+    doc.text(`Time Window  : ${fromDate} [${fromTime}] to ${toDate} [${toTime}]`, 20, 44);
+
+    // Summary Section
     doc.setFont("helvetica", "bold");
-    doc.text("CURRENT TELEMETRY SUMMARY", 20, 65);
+    doc.setFontSize(12);
+    doc.text("1. CURRENT ASSET HEALTH SUMMARY", 20, 56);
     doc.setLineWidth(0.2);
-    doc.line(20, 68, 100, 68);
+    doc.line(20, 58, 190, 58);
+
     doc.setFont("helvetica", "normal");
-    doc.text(`Equipment Status       : ${machineData.status}`, 20, 78);
-    doc.text(`Predicted RUL          : ${machineData.predicted_rul_hours} Hours`, 20, 85);
-    doc.text(`Efficiency             : ${machineData.calculated_efficiency}%`, 20, 92);
-    doc.save(`${selectedEquipment}_Report_${fromDate}_to_${toDate}.pdf`);
+    doc.setFontSize(10);
+    doc.text(`Status               : ${machineData.status}`, 20, 66);
+    doc.text(`Predicted RUL        : ${machineData.predicted_rul_hours} Hours`, 20, 72);
+    doc.text(`Efficiency           : ${machineData.calculated_efficiency}%`, 20, 78);
+    doc.text(`Servicing Target     : ${machineData.suggested_servicing_date}`, 20, 84);
+
+    // Sensor Telemetry Table Header
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(12);
+    doc.text("2. FULL SENSOR ARRAY AUDIT LOG", 20, 96);
+    doc.setLineWidth(0.2);
+    doc.line(20, 98, 190, 98);
+
+    doc.setFontSize(9);
+    let yPos = 106;
+    
+    targetConfig.forEach((sensor, idx) => {
+      const val = currentData[sensor.id] !== undefined ? currentData[sensor.id].toFixed(2) : sensor.optimal;
+      doc.setFont("helvetica", "bold");
+      doc.text(`${sensor.fullLabel}:`, 25, yPos);
+      doc.setFont("helvetica", "normal");
+      doc.text(`${val} ${sensor.unit} (Optimal Baseline: ${sensor.optimal} ${sensor.unit})`, 90, yPos);
+      yPos += 7;
+    });
+
+    // Alert Logs Section
+    yPos += 6;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(12);
+    doc.text("3. HISTORICAL ANOMALY & ALERT LOGS", 20, yPos);
+    doc.setLineWidth(0.2);
+    doc.line(20, yPos + 2, 190, yPos + 2);
+    yPos += 10;
+
+    doc.setFontSize(9);
+    if (alerts.length === 0) {
+      doc.setFont("helvetica", "italic");
+      doc.text("No anomalies or alerts logged during this window.", 25, yPos);
+    } else {
+      doc.setFont("helvetica", "normal");
+      alerts.forEach(alt => {
+        if (yPos > 270) {
+          doc.addPage();
+          yPos = 20;
+        }
+        doc.text(`[${alt.time}] ${alt.msg}`, 25, yPos);
+        yPos += 6;
+      });
+    }
+
+    doc.save(`${selectedEquip}_Audit_Report_${fromDate}_to_${toDate}.pdf`);
     setIsReportModalOpen(false);
   };
 
@@ -338,7 +365,16 @@ const App = () => {
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            {/* View All Sensors Button on Dashboard Header */}
+            <button 
+              onClick={() => setIsShowAllOpen(true)} 
+              className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-lg border border-slate-700 flex items-center gap-2 transition-colors"
+            >
+              <List className="w-4 h-4 text-emerald-400" />
+              <span>All Sensors</span>
+            </button>
+
             {machineData.status === "OPERATIONAL" && (
               <div className="px-4 py-2 rounded-lg border border-emerald-500/50 bg-emerald-500/20 text-emerald-400 text-xs font-bold uppercase tracking-wider flex items-center gap-2">
                 <ShieldCheck className="w-4 h-4 text-emerald-400" />
@@ -379,17 +415,8 @@ const App = () => {
               </div>
               <div className="p-3">
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Actions</p>
-                <button onClick={() => { setIsShowAllOpen(true); setIsMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:bg-slate-700/50 rounded-lg flex items-center gap-2">
-                  <List className="w-4 h-4 text-emerald-400" /> View All Sensors
-                </button>
-                <button onClick={() => { setIsConfigOpen(true); setIsMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:bg-slate-700/50 rounded-lg flex items-center gap-2">
-                  <LayoutDashboard className="w-4 h-4 text-amber-400" /> Configure Dashboard
-                </button>
                 <button onClick={() => { setIsReportModalOpen(true); setIsMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:bg-slate-700/50 rounded-lg flex items-center gap-2">
-                  <FileText className="w-4 h-4 text-rose-400" /> Generate PDF Report
-                </button>
-                <button onClick={handleExportCSV} className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:bg-slate-700/50 rounded-lg flex items-center gap-2">
-                  <Download className="w-4 h-4 text-blue-400" /> Export Live Audit (CSV)
+                  <FileText className="w-4 h-4 text-cyan-400" /> Generate Report
                 </button>
                 <button onClick={openSimulateModal} className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:bg-slate-700/50 rounded-lg flex items-center gap-2">
                   <Database className="w-4 h-4 text-cyan-400" /> Simulate Sensor Data
@@ -435,7 +462,7 @@ const App = () => {
           </div>
         </div>
 
-        {/* --- Configurable Radial Gauge Sensor Telemetry --- */}
+        {/* --- Radial Gauge Sensor Telemetry --- */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 relative z-10">
           {selectedGauges.map(sensorId => {
             const config = activeConfig.find(s => s.id === sensorId);
@@ -454,7 +481,7 @@ const App = () => {
           })}
         </div>
 
-        {/* --- Bottom Row: Real-time Interactive Charts --- */}
+        {/* --- Real-time Interactive Charts --- */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 relative z-10">
           <div 
             onClick={() => openExpandedGraph('rul')}
@@ -503,67 +530,18 @@ const App = () => {
           </div>
         </div>
 
-        {/* --- Alerts and Checklist Row --- */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 relative z-10">
-          <div className="bg-[#0f172a] rounded-xl p-6 border border-slate-800/80 shadow-md h-64 overflow-hidden flex flex-col">
-            <div className="flex items-center gap-2 mb-4">
-              <BellRing className="w-4 h-4 text-rose-400" />
-              <h2 className="text-sm font-semibold text-slate-200">Active Alert Log</h2>
-            </div>
-            <div className="overflow-y-auto space-y-2 pr-2 flex-1 scrollbar-thin scrollbar-thumb-slate-700">
-              {alerts.length === 0 ? (
-                <p className="text-sm text-slate-500 italic mt-4">No recent anomalies detected.</p>
-              ) : (
-                alerts.map((alert, idx) => (
-                  <div key={idx} className={`p-3 rounded-lg border text-xs flex gap-3 ${
-                    alert.level === 'red' ? 'bg-rose-500/10 border-rose-500/30 text-rose-300' : 'bg-amber-500/10 border-amber-500/30 text-amber-300'
-                  }`}>
-                    <span className="font-mono text-[10px] opacity-70 mt-0.5 whitespace-nowrap">[{alert.time}]</span>
-                    <span>{alert.msg}</span>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-
-          <div className="bg-[#0f172a] rounded-xl p-6 border border-slate-800/80 shadow-md h-64 overflow-hidden flex flex-col">
-            <div className="flex items-center gap-2 mb-4">
-              <CheckSquare className="w-4 h-4 text-emerald-400" />
-              <h2 className="text-sm font-semibold text-slate-200">Recommended Action Plan</h2>
-            </div>
-            {machineData.status === "OPERATIONAL" ? (
-              <div className="flex-1 flex items-center justify-center border-2 border-dashed border-slate-700 rounded-xl">
-                <p className="text-sm text-slate-500 text-center px-4">System is operating normally.<br/>No immediate maintenance required.</p>
-              </div>
-            ) : (
-              <div className="overflow-y-auto space-y-2 pr-2 flex-1">
-                {maintenanceTasks.map((task, idx) => (
-                  <label key={idx} className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                    checkedTasks[idx] ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300 line-through opacity-60' : 'bg-slate-800/50 border-slate-700 text-slate-300 hover:bg-slate-700/50'
-                  }`}>
-                    <input 
-                      type="checkbox" 
-                      className="mt-0.5 w-4 h-4 accent-emerald-500 bg-slate-900 border-slate-700 rounded"
-                      checked={!!checkedTasks[idx]}
-                      onChange={() => toggleTask(idx)}
-                    />
-                    <span className="text-sm">{task}</span>
-                  </label>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
       </div>
 
       {/* --- View All Sensors Modal --- */}
       {isShowAllOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#0f172a] border-2 border-slate-700 rounded-none w-full max-w-2xl p-6 shadow-2xl relative">
+          <div className="bg-[#0f172a] border-2 border-slate-700 rounded-2xl w-full max-w-2xl p-6 shadow-2xl relative">
             <button onClick={() => setIsShowAllOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white">
               <X className="w-5 h-5" />
             </button>
-            <h2 className="text-lg font-bold text-white mb-6 uppercase tracking-widest border-b border-slate-700 pb-2">Full Sensor Array : {equipment.toUpperCase()}</h2>
+            <h2 className="text-lg font-bold text-white mb-6 uppercase tracking-widest border-b border-slate-700 pb-2 flex items-center gap-2">
+              <List className="w-5 h-5 text-emerald-400"/> Full Sensor Array: {equipment.toUpperCase()}
+            </h2>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
               {activeConfig.map(sensor => (
                 <div key={sensor.id} className="bg-slate-800/50 p-4 border-l-4 rounded-r-md flex flex-col justify-between" style={{ borderColor: sensor.color }}>
@@ -575,58 +553,8 @@ const App = () => {
               ))}
             </div>
             <div className="mt-6 flex justify-end">
-              <button onClick={() => setIsShowAllOpen(false)} className="bg-slate-700 hover:bg-slate-600 text-white font-bold py-2 px-6 rounded-none transition-colors uppercase text-xs tracking-wider">Close</button>
+              <button onClick={() => setIsShowAllOpen(false)} className="bg-slate-700 hover:bg-slate-600 text-white font-bold py-2 px-6 rounded-lg transition-colors uppercase text-xs tracking-wider">Close</button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* --- Dashboard Layout Configuration Modal --- */}
-      {isConfigOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#0f172a] border-2 border-slate-700 rounded-none w-full max-w-md p-6 shadow-2xl relative">
-            <button onClick={() => setIsConfigOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white">
-              <X className="w-5 h-5" />
-            </button>
-            <h2 className="text-lg font-bold text-white mb-6 uppercase tracking-widest border-b border-slate-700 pb-2">Dashboard Settings</h2>
-            
-            <div className="mb-6">
-              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 flex justify-between">
-                <span>Select 3 Primary Gauges</span>
-                <span className={selectedGauges.length === 3 ? "text-emerald-400" : "text-rose-400"}>{selectedGauges.length} / 3</span>
-              </label>
-              <div className="grid grid-cols-2 gap-2">
-                {activeConfig.map(sensor => {
-                  const isSelected = selectedGauges.includes(sensor.id);
-                  return (
-                    <button 
-                      key={`gauge-${sensor.id}`} 
-                      onClick={() => handleToggleGauge(sensor.id)}
-                      className={`p-2 border-2 text-[10px] font-bold uppercase transition-colors rounded-none ${isSelected ? 'border-cyan-500 bg-cyan-500/10 text-cyan-400' : 'border-slate-700 bg-transparent text-slate-500 hover:border-slate-500'}`}
-                    >
-                      {sensor.label}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-
-            <div className="mb-6">
-              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Target Graph Telemetry</label>
-              <select 
-                value={selectedGraph} 
-                onChange={(e) => setSelectedGraph(e.target.value)}
-                className="w-full bg-[#1e293b] border-2 border-slate-700 text-white rounded-none p-3 text-xs font-bold uppercase focus:outline-none focus:border-cyan-500 appearance-none cursor-pointer"
-              >
-                {activeConfig.map(sensor => (
-                  <option key={`graph-${sensor.id}`} value={sensor.id}>{sensor.fullLabel}</option>
-                ))}
-              </select>
-            </div>
-
-            <button onClick={() => setIsConfigOpen(false)} className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3 rounded-none transition-colors uppercase text-xs tracking-widest">
-              Apply Layout
-            </button>
           </div>
         </div>
       )}
@@ -697,37 +625,50 @@ const App = () => {
         </div>
       )}
 
-      {/* --- Generate PDF Report Modal --- */}
+      {/* --- Generate Report Modal --- */}
       {isReportModalOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#0f172a] border-2 border-slate-700 rounded-none w-full max-w-md p-6 shadow-2xl relative">
+          <div className="bg-[#0f172a] border border-slate-700 rounded-2xl w-full max-w-lg p-6 shadow-2xl relative">
             <button onClick={() => setIsReportModalOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white">
               <X className="w-5 h-5" />
             </button>
             <h2 className="text-lg font-bold text-white mb-6 uppercase tracking-widest border-b border-slate-700 pb-2 flex items-center gap-2">
-              <FileText className="w-5 h-5 text-cyan-400"/> Report Engine
+              <FileText className="w-5 h-5 text-cyan-400"/> Generate Audit Report
             </h2>
             <form onSubmit={handleGenerateReport} className="space-y-4">
               <div>
-                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Target Equipment</label>
-                <select name="equipment" defaultValue={equipment} className="w-full bg-[#1e293b] border-2 border-slate-700 text-white rounded-none p-2.5 text-xs font-bold uppercase focus:outline-none focus:border-cyan-500">
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Select Equipment</label>
+                <select name="equipment" defaultValue={equipment} className="w-full bg-[#1e293b] border border-slate-700 text-white rounded-lg p-2.5 text-xs font-bold uppercase focus:outline-none focus:border-cyan-500">
                   <option value="pump">Centrifugal Pump 01</option>
                   <option value="compressor">Gas Compressor 01</option>
                 </select>
               </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">From Date</label>
-                  <input type="date" name="fromDate" required className="w-full bg-[#1e293b] border-2 border-slate-700 text-white rounded-none p-2.5 text-xs font-bold uppercase focus:outline-none focus:border-cyan-500" />
+                  <input type="date" name="fromDate" required className="w-full bg-[#1e293b] border border-slate-700 text-white rounded-lg p-2.5 text-xs font-bold focus:outline-none focus:border-cyan-500" />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">To Date</label>
-                  <input type="date" name="toDate" required className="w-full bg-[#1e293b] border-2 border-slate-700 text-white rounded-none p-2.5 text-xs font-bold uppercase focus:outline-none focus:border-cyan-500" />
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">From Time</label>
+                  <input type="time" name="fromTime" defaultValue="00:00" required className="w-full bg-[#1e293b] border border-slate-700 text-white rounded-lg p-2.5 text-xs font-bold focus:outline-none focus:border-cyan-500" />
                 </div>
               </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">To Date</label>
+                  <input type="date" name="toDate" required className="w-full bg-[#1e293b] border border-slate-700 text-white rounded-lg p-2.5 text-xs font-bold focus:outline-none focus:border-cyan-500" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">To Time</label>
+                  <input type="time" name="toTime" defaultValue="23:59" required className="w-full bg-[#1e293b] border border-slate-700 text-white rounded-lg p-2.5 text-xs font-bold focus:outline-none focus:border-cyan-500" />
+                </div>
+              </div>
+
               <div className="pt-4">
-                <button type="submit" className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3 rounded-none transition-colors uppercase text-xs tracking-widest">
-                  Generate PDF
+                <button type="submit" className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3 rounded-lg transition-colors uppercase text-xs tracking-widest">
+                  Generate Report
                 </button>
               </div>
             </form>
@@ -738,7 +679,7 @@ const App = () => {
       {/* --- Multi-Step Simulate Data Modal --- */}
       {isSimulateModalOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#0f172a] border-2 border-slate-700 rounded-none w-full max-w-md p-6 shadow-2xl relative">
+          <div className="bg-[#0f172a] border border-slate-700 rounded-2xl w-full max-w-md p-6 shadow-2xl relative">
             <button 
               type="button" 
               onClick={() => setIsSimulateModalOpen(false)} 
@@ -763,7 +704,7 @@ const App = () => {
                       setSelectedSimEquipment(e.target.value); 
                       setSelectedSimSensors([]);
                     }}
-                    className="w-full bg-[#1e293b] border-2 border-slate-700 text-white rounded-none p-2.5 text-xs font-bold uppercase focus:outline-none focus:border-cyan-500"
+                    className="w-full bg-[#1e293b] border border-slate-700 text-white rounded-lg p-2.5 text-xs font-bold uppercase focus:outline-none focus:border-cyan-500"
                   >
                     <option value="pump">Centrifugal Pump</option>
                     <option value="compressor">Gas Compressor</option>
@@ -778,7 +719,6 @@ const App = () => {
                     </span>
                   </label>
                   
-                  {/* Grid of clickable buttons */}
                   <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-2">
                     {EQUIPMENT_SENSORS[selectedSimEquipment].map(sensor => {
                       const isSimSelected = selectedSimSensors.includes(sensor.id);
@@ -790,7 +730,7 @@ const App = () => {
                             e.preventDefault();
                             handleSimSensorToggle(sensor.id);
                           }}
-                          className={`p-3 border-2 text-[10px] font-bold uppercase transition-all rounded-none text-center cursor-pointer select-none ${
+                          className={`p-3 border text-[10px] font-bold uppercase transition-all rounded-lg text-center cursor-pointer select-none ${
                             isSimSelected 
                               ? 'border-indigo-500 bg-indigo-500/20 text-indigo-300 shadow-lg' 
                               : 'border-slate-700 bg-slate-800/40 text-slate-400 hover:border-slate-500 hover:text-slate-200'
@@ -808,7 +748,7 @@ const App = () => {
                     type="button"
                     onClick={() => setSimulationStep(2)} 
                     disabled={selectedSimSensors.length < 3}
-                    className={`w-full flex items-center justify-center gap-2 font-bold py-3 rounded-none transition-colors uppercase text-xs tracking-widest ${
+                    className={`w-full flex items-center justify-center gap-2 font-bold py-3 rounded-lg transition-colors uppercase text-xs tracking-widest ${
                       selectedSimSensors.length >= 3 
                         ? 'bg-indigo-600 hover:bg-indigo-500 text-white cursor-pointer' 
                         : 'bg-slate-800 text-slate-600 border border-slate-700 cursor-not-allowed'
@@ -840,16 +780,21 @@ const App = () => {
                     .filter(s => selectedSimSensors.includes(s.id))
                     .map(sensor => (
                       <div key={`input-${sensor.id}`}>
-                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">
-                          {sensor.label}
-                        </label>
+                        <div className="flex justify-between items-center mb-2">
+                          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                            {sensor.label}
+                          </label>
+                          <span className="text-[10px] font-mono text-cyan-400 font-bold">
+                            ({sensor.unit})
+                          </span>
+                        </div>
                         <input 
                           type="number" 
                           step={sensor.step} 
                           name={sensor.id} 
                           required 
                           defaultValue={sensor.optimal}
-                          className="w-full bg-[#1e293b] border-2 border-slate-700 text-white rounded-none p-2.5 text-xs font-bold focus:outline-none focus:border-cyan-500" 
+                          className="w-full bg-[#1e293b] border border-slate-700 text-white rounded-lg p-2.5 text-xs font-bold focus:outline-none focus:border-cyan-500" 
                         />
                       </div>
                     ))}
@@ -858,14 +803,14 @@ const App = () => {
                 <div className="pt-4">
                   <button 
                     type="submit" 
-                    className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-none transition-colors uppercase text-xs tracking-widest"
+                    className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-lg transition-colors uppercase text-xs tracking-widest"
                   >
                     Run ML Engine
                   </button>
                 </div>
 
                 {simulationResult && (
-                  <div className="mt-4 p-4 bg-slate-800/50 border-2 border-slate-700 rounded-none">
+                  <div className="mt-4 p-4 bg-slate-800/50 border border-slate-700 rounded-lg">
                     <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Model Output</h3>
                     <div className="flex justify-between items-center mb-3">
                       <span className="text-xs font-bold uppercase text-slate-300">Predicted RUL:</span>
@@ -882,7 +827,7 @@ const App = () => {
                     </div>
                     <div className="flex justify-between items-center">
                       <span className="text-xs font-bold uppercase text-slate-300">System Status:</span>
-                      <span className={`px-2 py-1 text-[10px] font-bold uppercase rounded-none border-2 ${
+                      <span className={`px-2 py-1 text-[10px] font-bold uppercase rounded border ${
                         simulationResult.alert_level === 'green' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/50' :
                         simulationResult.alert_level === 'yellow' ? 'bg-amber-500/10 text-amber-400 border-amber-500/50' :
                         'bg-rose-500/10 text-rose-400 border-rose-500/50 animate-pulse'
