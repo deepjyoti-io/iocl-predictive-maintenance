@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, PieChart, Pie, Cell, ReferenceLine, AreaChart, Area, Tooltip as RechartsTooltip } from 'recharts';
-import { Activity, Thermometer, Gauge, AlertTriangle, Clock, ShieldCheck, AlertOctagon, Menu, X, FileText, Settings2, Database, List, Maximize2, Calendar, ArrowRight, ArrowLeft } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { Activity, Thermometer, Gauge, AlertTriangle, Clock, ShieldCheck, AlertOctagon, Menu, X, FileText, Settings2, Database, List, ArrowRight, ArrowLeft } from 'lucide-react';
 import { jsPDF } from "jspdf";
 
 // --- Custom Semi-Circle Gauge Component ---
@@ -79,10 +79,6 @@ const App = () => {
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [isShowAllOpen, setIsShowAllOpen] = useState(false);
   const [isSimulateModalOpen, setIsSimulateModalOpen] = useState(false);
-  
-  // Expanded Historical Graph Modal
-  const [expandedGraph, setExpandedGraph] = useState(null);
-  const [historicalMockData, setHistoricalMockData] = useState([]);
 
   // Simulation State
   const [selectedSimEquipment, setSelectedSimEquipment] = useState("pump");
@@ -192,7 +188,7 @@ const App = () => {
     );
   };
 
-  // Detailed Report Generator with Sensor Telemetry & Alerts
+  // Detailed Report Generator
   const handleGenerateReport = (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
@@ -245,7 +241,7 @@ const App = () => {
     doc.setFontSize(9);
     let yPos = 106;
     
-    targetConfig.forEach((sensor, idx) => {
+    targetConfig.forEach((sensor) => {
       const val = currentData[sensor.id] !== undefined ? currentData[sensor.id].toFixed(2) : sensor.optimal;
       doc.setFont("helvetica", "bold");
       doc.text(`${sensor.fullLabel}:`, 25, yPos);
@@ -281,38 +277,6 @@ const App = () => {
 
     doc.save(`${selectedEquip}_Audit_Report_${fromDate}_to_${toDate}.pdf`);
     setIsReportModalOpen(false);
-  };
-
-  const handleFetchHistory = (e) => {
-    e.preventDefault();
-    const formData = new FormData(e.target);
-    const fromDate = new Date(formData.get("fromDate"));
-    const toDate = new Date(formData.get("toDate"));
-    
-    const diffDays = Math.ceil(Math.abs(toDate - fromDate) / (1000 * 60 * 60 * 24));
-    const points = Math.min(diffDays + 1, 60);
-    
-    const data = [];
-    let val = expandedGraph === 'rul' ? (equipment === 'pump' ? 700 : 80) : activeConfig.find(s=>s.id === expandedGraph).optimal;
-    
-    for(let i = 0; i < points; i++) {
-      let trend = expandedGraph === 'rul' ? -2.5 : (Math.random() * 0.4 - 0.2);
-      val = Math.max(0, val + trend + (Math.random() * 2 - 1));
-      
-      const pDate = new Date(fromDate);
-      pDate.setDate(pDate.getDate() + i);
-      
-      data.push({
-        date: pDate.toISOString().split('T')[0],
-        value: parseFloat(val.toFixed(2))
-      });
-    }
-    setHistoricalMockData(data);
-  };
-
-  const openExpandedGraph = (type) => {
-    setExpandedGraph(type);
-    setHistoricalMockData([]);
   };
 
   const openSimulateModal = () => {
@@ -481,15 +445,9 @@ const App = () => {
           })}
         </div>
 
-        {/* --- Real-time Interactive Charts --- */}
+        {/* --- Real-time Static Charts --- */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 relative z-10">
-          <div 
-            onClick={() => openExpandedGraph('rul')}
-            className="bg-[#0f172a] rounded-xl p-6 border border-slate-800/80 shadow-md cursor-pointer group hover:border-cyan-500/50 transition-colors relative"
-          >
-            <div className="absolute top-6 right-6 opacity-0 group-hover:opacity-100 transition-opacity">
-              <Maximize2 className="w-5 h-5 text-slate-400" />
-            </div>
+          <div className="bg-[#0f172a] rounded-xl p-6 border border-slate-800/80 shadow-md">
             <div className="flex items-center gap-2 mb-6">
               <Clock className="w-4 h-4 text-cyan-400" />
               <h2 className="text-sm font-semibold text-slate-200">RUL Degradation Trend</h2>
@@ -506,13 +464,7 @@ const App = () => {
             </div>
           </div>
 
-          <div 
-            onClick={() => openExpandedGraph(selectedGraph)}
-            className="bg-[#0f172a] rounded-xl p-6 border border-slate-800/80 shadow-md cursor-pointer group hover:border-amber-500/50 transition-colors relative"
-          >
-            <div className="absolute top-6 right-6 opacity-0 group-hover:opacity-100 transition-opacity">
-              <Maximize2 className="w-5 h-5 text-slate-400" />
-            </div>
+          <div className="bg-[#0f172a] rounded-xl p-6 border border-slate-800/80 shadow-md">
             <div className="flex items-center gap-2 mb-6">
               <graphConfig.icon className="w-4 h-4" style={{ color: graphConfig.color }} />
               <h2 className="text-sm font-semibold text-slate-200">Live {graphConfig.label} Trend</h2>
@@ -554,72 +506,6 @@ const App = () => {
             </div>
             <div className="mt-6 flex justify-end">
               <button onClick={() => setIsShowAllOpen(false)} className="bg-slate-700 hover:bg-slate-600 text-white font-bold py-2 px-6 rounded-lg transition-colors uppercase text-xs tracking-wider">Close</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* --- Expanded Historical Graph Modal --- */}
-      {expandedGraph && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#0f172a] border border-slate-700 rounded-2xl w-full max-w-5xl h-[80vh] p-6 shadow-2xl relative flex flex-col">
-            <button onClick={() => setExpandedGraph(null)} className="absolute top-4 right-4 text-slate-400 hover:text-white">
-              <X className="w-6 h-6" />
-            </button>
-            
-            <h2 className="text-xl font-bold text-white mb-6 uppercase tracking-widest border-b border-slate-700 pb-4 flex items-center gap-3">
-              <Calendar className="w-6 h-6 text-cyan-400"/> 
-              Historical Trend Analyzer: {expandedGraph === 'rul' ? 'Predicted RUL' : activeConfig.find(s=>s.id === expandedGraph)?.fullLabel}
-            </h2>
-            
-            <form onSubmit={handleFetchHistory} className="flex items-end gap-4 mb-6 bg-slate-800/50 p-4 rounded-xl border border-slate-700">
-              <div className="flex-1">
-                <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">From Date</label>
-                <input type="date" name="fromDate" required defaultValue="2026-06-01" className="w-full bg-[#1e293b] border border-slate-700 text-white rounded-lg p-2.5 text-sm focus:outline-none focus:border-cyan-500" />
-              </div>
-              <div className="flex-1">
-                <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">To Date (Present)</label>
-                <input type="date" name="toDate" required defaultValue="2026-07-28" className="w-full bg-[#1e293b] border border-slate-700 text-white rounded-lg p-2.5 text-sm focus:outline-none focus:border-cyan-500" />
-              </div>
-              <button type="submit" className="bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2.5 px-6 rounded-lg transition-colors uppercase text-xs tracking-widest">
-                Fetch Data
-              </button>
-            </form>
-
-            <div className="flex-1 min-h-0 bg-[#070b14] rounded-xl border border-slate-800 p-4">
-              {historicalMockData.length === 0 ? (
-                <div className="w-full h-full flex items-center justify-center text-slate-500 flex-col gap-2">
-                  <Database className="w-8 h-8 opacity-50" />
-                  <p>Select dates and click Fetch Data to generate historical trend.</p>
-                </div>
-              ) : (
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={historicalMockData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={expandedGraph === 'rul' ? '#06b6d4' : (activeConfig.find(s=>s.id === expandedGraph)?.color || '#06b6d4')} stopOpacity={0.3}/>
-                        <stop offset="95%" stopColor={expandedGraph === 'rul' ? '#06b6d4' : (activeConfig.find(s=>s.id === expandedGraph)?.color || '#06b6d4')} stopOpacity={0}/>
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                    <XAxis dataKey="date" stroke="#64748b" tick={{ fontSize: 12 }} tickLine={false} axisLine={false} minTickGap={30} />
-                    <YAxis stroke="#64748b" tick={{ fontSize: 12 }} tickLine={false} axisLine={false} domain={['auto', 'auto']} />
-                    <RechartsTooltip 
-                      contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f8fafc' }}
-                      itemStyle={{ color: expandedGraph === 'rul' ? '#06b6d4' : (activeConfig.find(s=>s.id === expandedGraph)?.color || '#06b6d4') }}
-                    />
-                    <Area 
-                      type="monotone" 
-                      dataKey="value" 
-                      name={expandedGraph === 'rul' ? 'RUL (hrs)' : activeConfig.find(s=>s.id === expandedGraph)?.unit}
-                      stroke={expandedGraph === 'rul' ? '#06b6d4' : (activeConfig.find(s=>s.id === expandedGraph)?.color || '#06b6d4')} 
-                      fillOpacity={1} 
-                      fill="url(#colorValue)" 
-                      strokeWidth={3} 
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              )}
             </div>
           </div>
         </div>
