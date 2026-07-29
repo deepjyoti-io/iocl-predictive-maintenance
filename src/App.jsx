@@ -37,7 +37,9 @@ const SemiCircleGauge = ({ value, max, color, unit, label, icon: Icon }) => {
           </PieChart>
         </ResponsiveContainer>
         <div className="absolute bottom-2 w-full flex flex-col items-center justify-center">
-          <span className="text-3xl font-extrabold text-white leading-none tracking-tight">{value !== undefined ? value.toFixed(1) : "0.0"}</span>
+          <span className="text-3xl font-extrabold text-white leading-none tracking-tight">
+            {value !== undefined ? value.toFixed(1) : "0.0"}
+          </span>
           <span className="text-xs text-slate-400 font-medium mt-1">{unit}</span>
         </div>
       </div>
@@ -80,18 +82,17 @@ const App = () => {
   const [isSimulateModalOpen, setIsSimulateModalOpen] = useState(false);
   
   // Expanded Graph Modal
-  const [expandedGraph, setExpandedGraph] = useState(null); // 'rul' or sensor id
+  const [expandedGraph, setExpandedGraph] = useState(null);
   const [historicalMockData, setHistoricalMockData] = useState([]);
 
-  // Simulation
+  // Simulation State
   const [selectedSimEquipment, setSelectedSimEquipment] = useState("pump");
   const [simulationStep, setSimulationStep] = useState(1);
   const [selectedSimSensors, setSelectedSimSensors] = useState([]);
   const [simulationResult, setSimulationResult] = useState(null);
   
-  // Persistent Histories (Data won't clear on equipment switch)
+  // Persistent Histories across equipment toggle
   const [histories, setHistories] = useState({ pump: [], compressor: [] });
-  
   const [alerts, setAlerts] = useState([]);
   const [checkedTasks, setCheckedTasks] = useState({});
   
@@ -116,9 +117,8 @@ const App = () => {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Fetch Live Data
+  // Fetch Live Telemetry Data
   useEffect(() => {
-    // We strictly DO NOT clear histories here so it doesn't refresh
     setAlerts([]);
     setCheckedTasks({});
     setSelectedGauges(['vibration', 'temperature', 'pressure']);
@@ -149,7 +149,6 @@ const App = () => {
             lube_box_level: equipment === 'compressor' ? 85 - Math.random() * 0.1 : undefined,
             rod_drop: equipment === 'compressor' ? 0.05 + Math.random() * 0.005 : undefined,
           };
-          // Expanded array to 50 to prevent short refreshes
           return { ...prev, [equipment]: [...currentEquipHistory, newPoint].slice(-50) };
         });
 
@@ -208,6 +207,12 @@ const App = () => {
     }
   };
 
+  const handleSimSensorToggle = (id) => {
+    setSelectedSimSensors(prev => 
+      prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
+    );
+  };
+
   const handleExportCSV = () => {
     if (currentHistory.length === 0) return alert("No telemetry data available to export yet.");
     const headers = ["Timestamp", "RUL", "Efficiency", ...activeConfig.map(s => s.id)];
@@ -251,7 +256,6 @@ const App = () => {
     setIsReportModalOpen(false);
   };
 
-  // --- Historical Data Generator ---
   const handleFetchHistory = (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
@@ -259,12 +263,12 @@ const App = () => {
     const toDate = new Date(formData.get("toDate"));
     
     const diffDays = Math.ceil(Math.abs(toDate - fromDate) / (1000 * 60 * 60 * 24));
-    const points = Math.min(diffDays + 1, 60); // Cap at 60 points for chart readability
+    const points = Math.min(diffDays + 1, 60);
     
     const data = [];
     let val = expandedGraph === 'rul' ? (equipment === 'pump' ? 700 : 80) : activeConfig.find(s=>s.id === expandedGraph).optimal;
     
-    for(let i=0; i<points; i++) {
+    for(let i = 0; i < points; i++) {
       let trend = expandedGraph === 'rul' ? -2.5 : (Math.random() * 0.4 - 0.2);
       val = Math.max(0, val + trend + (Math.random() * 2 - 1));
       
@@ -279,10 +283,45 @@ const App = () => {
     setHistoricalMockData(data);
   };
 
-  // Pre-load mock data when modal opens
   const openExpandedGraph = (type) => {
     setExpandedGraph(type);
-    setHistoricalMockData([]); // Reset until dates are picked
+    setHistoricalMockData([]);
+  };
+
+  const openSimulateModal = () => {
+    setSimulationStep(1);
+    setSelectedSimEquipment(equipment);
+    setSelectedSimSensors([]);
+    setSimulationResult(null);
+    setIsSimulateModalOpen(true);
+    setIsMenuOpen(false);
+  };
+
+  const handleSimulateData = async (e) => {
+    e.preventDefault();
+    setSimulationResult(null); 
+    const formData = new FormData(e.target);
+    const availableSensors = EQUIPMENT_SENSORS[selectedSimEquipment];
+    
+    const payload = {
+      vibration: selectedSimSensors.includes('vibration') ? parseFloat(formData.get("vibration")) : availableSensors.find(s => s.id === 'vibration').optimal,
+      temperature: selectedSimSensors.includes('temperature') ? parseFloat(formData.get("temperature")) : availableSensors.find(s => s.id === 'temperature').optimal,
+      pressure: selectedSimSensors.includes('pressure') ? parseFloat(formData.get("pressure")) : availableSensors.find(s => s.id === 'pressure').optimal
+    };
+
+    try {
+      const response = await fetch(`https://iocl-predictive-maintenance.onrender.com/api/${selectedSimEquipment}/simulate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) throw new Error("Simulation request failed");
+      const data = await response.json();
+      setSimulationResult(data);
+    } catch (err) {
+      console.error(err);
+      alert("Failed to reach simulation engine. Make sure server is running.");
+    }
   };
 
   return (
@@ -352,13 +391,19 @@ const App = () => {
                 <button onClick={handleExportCSV} className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:bg-slate-700/50 rounded-lg flex items-center gap-2">
                   <Download className="w-4 h-4 text-blue-400" /> Export Live Audit (CSV)
                 </button>
-                <button onClick={() => { setIsSimulateModalOpen(true); setIsMenuOpen(false); setSimulationResult(null); }} className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:bg-slate-700/50 rounded-lg flex items-center gap-2">
+                <button onClick={openSimulateModal} className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:bg-slate-700/50 rounded-lg flex items-center gap-2">
                   <Database className="w-4 h-4 text-cyan-400" /> Simulate Sensor Data
                 </button>
               </div>
             </div>
           )}
         </header>
+
+        {error && (
+          <div className="bg-red-950/40 border border-red-800/60 text-red-300 p-4 rounded-xl text-sm font-mono">
+            ⚠️ CONNECTION ERROR: {error}
+          </div>
+        )}
 
         {/* --- Top Row: Key Performance Indicators --- */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 relative z-10">
@@ -411,7 +456,6 @@ const App = () => {
 
         {/* --- Bottom Row: Real-time Interactive Charts --- */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 relative z-10">
-          
           <div 
             onClick={() => openExpandedGraph('rul')}
             className="bg-[#0f172a] rounded-xl p-6 border border-slate-800/80 shadow-md cursor-pointer group hover:border-cyan-500/50 transition-colors relative"
@@ -660,7 +704,9 @@ const App = () => {
             <button onClick={() => setIsReportModalOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white">
               <X className="w-5 h-5" />
             </button>
-            <h2 className="text-lg font-bold text-white mb-6 uppercase tracking-widest border-b border-slate-700 pb-2 flex items-center gap-2"><FileText className="w-5 h-5 text-cyan-400"/> Report Engine</h2>
+            <h2 className="text-lg font-bold text-white mb-6 uppercase tracking-widest border-b border-slate-700 pb-2 flex items-center gap-2">
+              <FileText className="w-5 h-5 text-cyan-400"/> Report Engine
+            </h2>
             <form onSubmit={handleGenerateReport} className="space-y-4">
               <div>
                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Target Equipment</label>
@@ -693,19 +739,30 @@ const App = () => {
       {isSimulateModalOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-[#0f172a] border-2 border-slate-700 rounded-none w-full max-w-md p-6 shadow-2xl relative">
-            <button onClick={() => setIsSimulateModalOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white">
+            <button 
+              type="button" 
+              onClick={() => setIsSimulateModalOpen(false)} 
+              className="absolute top-4 right-4 text-slate-400 hover:text-white"
+            >
               <X className="w-5 h-5" />
             </button>
             
-            <h2 className="text-lg font-bold text-white mb-2 uppercase tracking-widest border-b border-slate-700 pb-2 flex items-center gap-2"><Database className="w-5 h-5 text-cyan-400"/> Simulator</h2>
+            <h2 className="text-lg font-bold text-white mb-2 uppercase tracking-widest border-b border-slate-700 pb-2 flex items-center gap-2">
+              <Database className="w-5 h-5 text-cyan-400"/> Simulator
+            </h2>
             
             {simulationStep === 1 && (
               <div className="space-y-4 pt-2">
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">1. Target Architecture</label>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">
+                    1. Target Architecture
+                  </label>
                   <select 
                     value={selectedSimEquipment} 
-                    onChange={(e) => {setSelectedSimEquipment(e.target.value); setSelectedSimSensors([]);}}
+                    onChange={(e) => {
+                      setSelectedSimEquipment(e.target.value); 
+                      setSelectedSimSensors([]);
+                    }}
                     className="w-full bg-[#1e293b] border-2 border-slate-700 text-white rounded-none p-2.5 text-xs font-bold uppercase focus:outline-none focus:border-cyan-500"
                   >
                     <option value="pump">Centrifugal Pump</option>
@@ -716,30 +773,45 @@ const App = () => {
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 flex justify-between">
                     <span>2. Injectable Variables</span>
-                    <span className={selectedSimSensors.length >= 3 ? "text-emerald-400" : "text-amber-400"}>{selectedSimSensors.length} Selected</span>
+                    <span className={selectedSimSensors.length >= 3 ? "text-emerald-400" : "text-amber-400"}>
+                      {selectedSimSensors.length} Selected
+                    </span>
                   </label>
+                  
+                  {/* Grid of clickable buttons */}
                   <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-2">
                     {EQUIPMENT_SENSORS[selectedSimEquipment].map(sensor => {
                       const isSimSelected = selectedSimSensors.includes(sensor.id);
                       return (
                         <button 
                           key={`sim-${sensor.id}`} 
-                          onClick={() => handleSimSensorToggle(sensor.id)}
-                          className={`p-2 border-2 text-[10px] font-bold uppercase transition-colors rounded-none ${isSimSelected ? 'border-indigo-500 bg-indigo-500/10 text-indigo-400' : 'border-slate-700 bg-transparent text-slate-500 hover:border-slate-500'}`}
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            handleSimSensorToggle(sensor.id);
+                          }}
+                          className={`p-3 border-2 text-[10px] font-bold uppercase transition-all rounded-none text-center cursor-pointer select-none ${
+                            isSimSelected 
+                              ? 'border-indigo-500 bg-indigo-500/20 text-indigo-300 shadow-lg' 
+                              : 'border-slate-700 bg-slate-800/40 text-slate-400 hover:border-slate-500 hover:text-slate-200'
+                          }`}
                         >
                           {sensor.label}
                         </button>
-                      )
+                      );
                     })}
                   </div>
                 </div>
 
                 <div className="pt-4">
                   <button 
+                    type="button"
                     onClick={() => setSimulationStep(2)} 
                     disabled={selectedSimSensors.length < 3}
                     className={`w-full flex items-center justify-center gap-2 font-bold py-3 rounded-none transition-colors uppercase text-xs tracking-widest ${
-                      selectedSimSensors.length >= 3 ? 'bg-indigo-600 hover:bg-indigo-500 text-white' : 'bg-slate-700 text-slate-500 cursor-not-allowed'
+                      selectedSimSensors.length >= 3 
+                        ? 'bg-indigo-600 hover:bg-indigo-500 text-white cursor-pointer' 
+                        : 'bg-slate-800 text-slate-600 border border-slate-700 cursor-not-allowed'
                     }`}
                   >
                     Set Values <ArrowRight className="w-4 h-4"/>
@@ -751,30 +823,43 @@ const App = () => {
             {simulationStep === 2 && (
               <form onSubmit={handleSimulateData} className="space-y-4 pt-2">
                 <div className="flex items-center justify-between mb-4">
-                  <button type="button" onClick={() => {setSimulationStep(1); setSimulationResult(null);}} className="text-[10px] font-bold uppercase text-slate-400 hover:text-cyan-400 flex items-center gap-1">
+                  <button 
+                    type="button" 
+                    onClick={() => { setSimulationStep(1); setSimulationResult(null); }} 
+                    className="text-[10px] font-bold uppercase text-slate-400 hover:text-cyan-400 flex items-center gap-1"
+                  >
                     <ArrowLeft className="w-3 h-3"/> Back
                   </button>
-                  <span className="text-[10px] font-bold text-cyan-400 uppercase tracking-widest">{selectedSimEquipment} SIMULATION</span>
+                  <span className="text-[10px] font-bold text-cyan-400 uppercase tracking-widest">
+                    {selectedSimEquipment} SIMULATION
+                  </span>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4 max-h-56 overflow-y-auto pr-2">
-                  {EQUIPMENT_SENSORS[selectedSimEquipment].filter(s => selectedSimSensors.includes(s.id)).map(sensor => (
-                    <div key={`input-${sensor.id}`}>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">{sensor.label}</label>
-                      <input 
-                        type="number" 
-                        step={sensor.step} 
-                        name={sensor.id} 
-                        required 
-                        defaultValue={sensor.optimal}
-                        className="w-full bg-[#1e293b] border-2 border-slate-700 text-white rounded-none p-2.5 text-xs font-bold focus:outline-none focus:border-cyan-500" 
-                      />
-                    </div>
-                  ))}
+                  {EQUIPMENT_SENSORS[selectedSimEquipment]
+                    .filter(s => selectedSimSensors.includes(s.id))
+                    .map(sensor => (
+                      <div key={`input-${sensor.id}`}>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">
+                          {sensor.label}
+                        </label>
+                        <input 
+                          type="number" 
+                          step={sensor.step} 
+                          name={sensor.id} 
+                          required 
+                          defaultValue={sensor.optimal}
+                          className="w-full bg-[#1e293b] border-2 border-slate-700 text-white rounded-none p-2.5 text-xs font-bold focus:outline-none focus:border-cyan-500" 
+                        />
+                      </div>
+                    ))}
                 </div>
 
                 <div className="pt-4">
-                  <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-none transition-colors uppercase text-xs tracking-widest">
+                  <button 
+                    type="submit" 
+                    className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-none transition-colors uppercase text-xs tracking-widest"
+                  >
                     Run ML Engine
                   </button>
                 </div>
@@ -784,7 +869,10 @@ const App = () => {
                     <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Model Output</h3>
                     <div className="flex justify-between items-center mb-3">
                       <span className="text-xs font-bold uppercase text-slate-300">Predicted RUL:</span>
-                      <span className={`text-lg font-bold ${simulationResult.alert_level === 'green' ? 'text-emerald-400' : simulationResult.alert_level === 'yellow' ? 'text-amber-400' : 'text-rose-400'}`}>
+                      <span className={`text-lg font-bold ${
+                        simulationResult.alert_level === 'green' ? 'text-emerald-400' : 
+                        simulationResult.alert_level === 'yellow' ? 'text-amber-400' : 'text-rose-400'
+                      }`}>
                         {simulationResult.simulated_rul} hrs
                       </span>
                     </div>
