@@ -72,7 +72,7 @@ class SimulationRequest(BaseModel):
     motor_current: Optional[float] = None
     seal_oil_level: Optional[float] = None
 
-@app.get("/", methods=["GET", "HEAD"])
+@app.api_route("/", methods=["GET", "HEAD"])
 def read_root():
     return {"status": "IOCL Multi-Equipment Telemetry API is Live!"}
 
