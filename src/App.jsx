@@ -64,6 +64,8 @@ const App = () => {
 
         setHistories(prev => {
           const currentEquipHistory = prev[equipment] || [];
+          
+          // Pure JSON stream mapping without Math.random()
           const newPoint = { 
             time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), 
             rul: data.predicted_rul_hours, 
@@ -71,12 +73,14 @@ const App = () => {
             vibration: data.vibration_velocity,
             temperature: data.bearing_temp,
             pressure: data.inlet_pressure,
-            flow_rate: equipment === 'pump' ? 120 + Math.random() * 2 - 1 : undefined,
-            motor_current: equipment === 'pump' ? 25 + Math.random() * 0.5 - 0.25 : undefined,
-            seal_oil_level: equipment === 'pump' ? 90 - Math.random() * 0.1 : undefined,
-            crosshead_temp: equipment === 'compressor' ? 65 + Math.random() * 1 - 0.5 : undefined,
-            lube_box_level: equipment === 'compressor' ? 85 - Math.random() * 0.1 : undefined,
-            rod_drop: equipment === 'compressor' ? 0.05 + Math.random() * 0.005 : undefined,
+            
+            // Sensor values derived directly from endpoint response or baseline config constants
+            flow_rate: data.flow_rate ?? (EQUIPMENT_SENSORS.pump.find(s => s.id === 'flow_rate')?.optimal || 120.0),
+            motor_current: data.motor_current ?? (EQUIPMENT_SENSORS.pump.find(s => s.id === 'motor_current')?.optimal || 25.0),
+            seal_oil_level: data.seal_oil_level ?? (EQUIPMENT_SENSORS.pump.find(s => s.id === 'seal_oil_level')?.optimal || 90.0),
+            crosshead_temp: data.crosshead_temp ?? (EQUIPMENT_SENSORS.compressor.find(s => s.id === 'crosshead_temp')?.optimal || 65.0),
+            lube_box_level: data.lube_box_level ?? (EQUIPMENT_SENSORS.compressor.find(s => s.id === 'lube_box_level')?.optimal || 85.0),
+            rod_drop: data.rod_drop ?? (EQUIPMENT_SENSORS.compressor.find(s => s.id === 'rod_drop')?.optimal || 0.05),
           };
           return { ...prev, [equipment]: [...currentEquipHistory, newPoint].slice(-50) };
         });
